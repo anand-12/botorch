@@ -22,16 +22,18 @@ class EnsemblePosterior(Posterior):
     eagerly a finite number of samples per X value as for example a deep ensemble
     or a random forest."""
 
-    def __init__(self, values: Tensor) -> None:
+    def __init__(self, values: Tensor, my_weights = None) -> None:
         r"""
         Args:
             values: Values of the samples produced by this posterior as
                 a `(b) x s x q x m` tensor where `m` is the output size of the
                 model and `s` is the ensemble size.
         """
+        self.my_weights = my_weights
         if values.ndim < 3:
             raise ValueError("Values has to be at least three-dimensional.")
         self.values = values
+
 
     @property
     def ensemble_size(self) -> int:
@@ -42,7 +44,10 @@ class EnsemblePosterior(Posterior):
     def weights(self) -> Tensor:
         r"""The weights of the individual models in the ensemble.
         Equally weighted by default."""
-        return torch.ones(self.ensemble_size) / self.ensemble_size
+        if self.my_weights is None:
+            return torch.ones(self.ensemble_size) / self.ensemble_size
+        else:
+            return self.my_weights
 
     @property
     def device(self) -> torch.device:
@@ -57,7 +62,15 @@ class EnsemblePosterior(Posterior):
     @property
     def mean(self) -> Tensor:
         r"""The mean of the posterior as a `(b) x n x m`-dim Tensor."""
+        
+        
         return self.values.mean(dim=-3)
+
+        if self.values.ndim==4:
+            return (self.values * self.my_weights[None,:,None,None]).sum(dim=-3)
+        elif self.values.ndim==3:
+            return (self.values * self.my_weights[:,None,None]).sum(dim=-3)
+
 
     @property
     def variance(self) -> Tensor:
@@ -67,7 +80,23 @@ class EnsemblePosterior(Posterior):
         """
         if self.ensemble_size == 1:
             return torch.zeros_like(self.values.squeeze(-3))
-        return self.values.var(dim=-3)
+        if self.my_weights is None:
+            return self.values.var(dim=-3)
+        
+        if self.values.ndim==4:
+            
+            mean = (self.values * self.my_weights[None,:,None,None]).sum(dim=-3, keepdim=True)
+
+            meanX2 = (self.values**2 * self.my_weights[None,:,None,None]).sum(dim=-3, keepdim=True)
+
+            return (meanX2 - mean**2).squeeze(-3)
+
+        elif self.values.ndim==3:
+            mean = (self.values * self.my_weights[:,None,None]).sum(dim=-3, keepdim=True)
+
+            meanX2 = (self.values**2 * self.my_weights[:,None,None]).sum(dim=-3, keepdim=True)
+
+            return (meanX2 - mean**2).squeeze(-3)
 
     def _extended_shape(
         self, sample_shape: torch.Size = torch.Size()  # noqa: B008
@@ -100,7 +129,7 @@ class EnsemblePosterior(Posterior):
         # get indices as base_samples
         base_samples = (
             torch.multinomial(
-                self.weights,
+                self.my_weights,
                 num_samples=sample_shape.numel(),
                 replacement=True,
             )

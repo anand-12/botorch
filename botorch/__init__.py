@@ -65,3 +65,5 @@ __all__ = [
     "settings",
     "test_functions",
 ]
+
+print("Using botorch version: ", __version__)
