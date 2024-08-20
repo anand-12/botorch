@@ -61,7 +61,7 @@ true_maxima = {
     "Rastrigin": 0.0,
     "Rosenbrock": 0.0,
     # "Schwefel": 0.0,
-    "SixHumpCamel": -1.0316,
+    "SixHumpCamel": 1.0316,
     "StyblinskiTang": 39.16599 * 2,  # for dim=2, scales with dimension
     "ThreeHumpCamel": 0.0
 }

@@ -5,12 +5,12 @@ import torch
 import numpy as np
 import time
 import warnings
-from utils import target_function, generate_initial_data
 import random
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.sampling import SobolQMCNormalSampler
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
 from botorch.models import SingleTaskGP
+from botorch.utils.sampling import draw_sobol_samples
 from botorch.acquisition import ExpectedImprovement, qExpectedImprovement, UpperConfidenceBound, ProbabilityOfImprovement, PosteriorMean, LogExpectedImprovement
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_mll
@@ -22,6 +22,20 @@ warnings.filterwarnings("ignore")
 
 from botorch.models.ensemble import EnsembleModel
 from botorch.posteriors.ensemble import EnsemblePosterior
+
+def target_function(test_func):
+    def wrapper(individuals):
+        result = []
+        for x in individuals:
+            result.append(-1.0 * test_func(x))
+        return torch.tensor(result, dtype=torch.float64, device=device)
+    return wrapper
+
+def generate_initial_data(n, n_dim, test_func):
+    train_x = draw_sobol_samples(bounds=torch.tensor([[0.0] * n_dim, [1.0] * n_dim], device=device), n=n, q=1).squeeze(1)
+    exact_obj = torch.tensor([test_func(x.unsqueeze(0)) for x in train_x], dtype=torch.float64, device=device).unsqueeze(-1)
+    best_observed_value = exact_obj.max().item()
+    return train_x, exact_obj, best_observed_value
 
 class MyEnsembleModel(EnsembleModel):
     def __init__(self, train_x, train_y, kernel_types, my_weights = None):
@@ -61,23 +75,24 @@ def gap_metric(f_start, f_current, f_star):
 def fit_model(train_x, train_y, kernel_type):
     train_x = train_x.to(dtype=torch.float64, device=device)
     train_y = train_y.to(dtype=torch.float64, device=device)
+    ard_num_dims = train_x.shape[-1]
 
     if kernel_type == 'RBF':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device=device, dtype=torch.float64)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
     elif kernel_type == 'Matern52':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel()).to(device=device, dtype=torch.float64)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
     elif kernel_type == 'Matern32':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5)).to(device=device, dtype=torch.float64)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
     elif kernel_type == 'RQ':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RQKernel()).to(device=device, dtype=torch.float64)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RQKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
     elif kernel_type == 'RFF':
         covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RFFKernel(num_samples=1024, num_dims=train_x.size(-1))
+            gpytorch.kernels.RFFKernel(num_samples=1024, num_dims=ard_num_dims)
         ).to(device=device, dtype=torch.float64)
     elif kernel_type == "ConstantKernel":
         covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.ConstantKernel()).to(device=device, dtype=torch.float64)
     elif kernel_type == "PeriodicKernel":
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.PeriodicKernel()).to(device=device, dtype=torch.float64)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.PeriodicKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
     else:
         raise ValueError(f"Unknown kernel type: {kernel_type}")
 
@@ -146,15 +161,15 @@ def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gain
 
     with gpytorch.settings.cholesky_jitter(1e-2):
         model = ensemble_model if true_ensemble else selected_model
-        logEI = LogExpectedImprovement(model=model, best_f=best_init_y)
+        LogEI = LogExpectedImprovement(model=model, best_f=best_init_y)
         EI = ExpectedImprovement(model=model, best_f=best_init_y)
         qEI = qExpectedImprovement(model=model, best_f=best_init_y, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([64])))
         UCB = UpperConfidenceBound(model=model, beta=0.1)
         PI = ProbabilityOfImprovement(model=model, best_f=best_init_y)
         PM = PosteriorMean(model=model)
 
-    acq_funcs = {'logEI': logEI, 'EI': EI, 'qEI': qEI, 'UCB': UCB, 'PI': PI, 'PM': PM}
-    acquisition_functions = [acq_funcs[acq] for acq in acq_func_types]
+    acquisition = {'LogEI': LogEI, 'EI': EI, 'qEI': qEI, 'UCB': UCB, 'PI': PI, 'PM': PM}
+    acquisition_functions = [acquisition[acq] for acq in acq_func_types]
     
     candidates_list = []
     for acq_function in acquisition_functions:
@@ -243,8 +258,10 @@ def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, tes
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
     execution_time = time.time() - start
-    return (best_observed_values, chosen_acq_functions, selected_models, true_maximum, 
-            gap_metrics, execution_time, simple_regrets, cumulative_regrets)
+    # return (best_observed_values, chosen_acq_functions, selected_models, true_maximum, 
+    #         gap_metrics, execution_time, simple_regrets, cumulative_regrets)
+    # print(f"Type of best_observed_values: {type(best_observed_values)} type of gap_metrics: {type(gap_metrics)} type of simple_regrets: {type(simple_regrets)} type of cumulative_regrets: {type(cumulative_regrets)}")
+    return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -254,8 +271,8 @@ def main(args):
     true_max = true_maxima[args.test_function]
     target_func = target_function(test_function)
 
-    all_seeds_results = []
-    for seed in range(args.seed, args.seed + args.num_experiments):
+    all_results = []
+    for seed in range(args.seed, args.seed + args.experiments):
         print(f"\nRunning experiment with seed {seed}")
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -271,27 +288,23 @@ def main(args):
         }
 
         s = time.time()
-        result = run_experiment(args.iterations, args.kernels, args.acq_funcs, initial_data, target_func, args.true_ensemble)
+        experiment_results = run_experiment(args.iterations, args.kernels, args.acquisition, initial_data, target_func, args.true_ensemble)
+        all_results.append(experiment_results)
         print(f"Time taken: {time.time() - s:.2f} seconds")
-        all_seeds_results.append(result)
+        print(f"Final Best value: {experiment_results[0][-1]:.4f}")
 
-    # Process results
-    median_simple_regrets = np.median([result[6] for result in all_seeds_results], axis=0)
-    median_cumulative_regrets = np.median([result[7] for result in all_seeds_results], axis=0)
+    # Save results
+    np.save(f"{'true' if args.true_ensemble else 'false'}_MMMA_{args.test_function}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {'true' if args.true_ensemble else 'false'}_MMMA_{args.test_function}_optimization_results.npy")
 
-    print("\nFinal Results:")
-    print(f"Final Simple Regret: {median_simple_regrets[-1]:.4f}")
-    print(f"Final Cumulative Regret: {median_cumulative_regrets[-1]:.4f}")
-    print(f"Median Simple Regret: {np.median(median_simple_regrets):.4f}")
-    print(f"Regret Reduction: {(median_simple_regrets[0] - median_simple_regrets[-1]) / median_simple_regrets[0] * 100:.2f}%")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")
     parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
     parser.add_argument("--seed", type=int, default=125, help="Starting random seed")
-    parser.add_argument("--acq_funcs", nargs="+", default=["logEI"], choices=["logEI", "EI", "UCB", "PI"], help="List of acquisition functions")
+    parser.add_argument("--acquisition", nargs="+", default=["LogEI"], choices=["LogEI", "EI", "UCB", "PI"], help="List of acquisition functions")
     parser.add_argument("--kernels", nargs="+", default=["Matern52"], choices=["Matern52", "RBF", "Matern32", "RFF"], help="List of kernels")
-    parser.add_argument("--num_experiments", type=int, default=10, help="Number of experiments to run")
+    parser.add_argument("--experiments", type=int, default=10, help="Number of experiments to run")
     parser.add_argument("--test_function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
     parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
