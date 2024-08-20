@@ -11,6 +11,8 @@ from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKe
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
 import warnings
+from botorch.acquisition.analytic import LogProbabilityOfImprovement
+
 
 warnings.filterwarnings("ignore")
 
@@ -34,8 +36,8 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
     objective, bounds = setup_test_function(test_func_name, dim)
     bounds = bounds.to(dtype=dtype, device=device)
     f_star = true_maxima[test_func_name]
-
-    train_X = draw_sobol_samples(bounds=bounds, n=10, q=1).squeeze(1)
+    num_initial_points = int(0.1 * n_iterations)
+    train_X = draw_sobol_samples(bounds=bounds, n=num_initial_points, q=1).squeeze(1)
     train_Y = -objective(train_X).unsqueeze(-1)
     
     best_observed_value = train_Y.max().item()
@@ -55,6 +57,7 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
             'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
             'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
             'PI': ProbabilityOfImprovement(model=model, best_f=best_observed_value),
+            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_observed_value),
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PM': PosteriorMean(model=model)
         }[acq_func_name]
@@ -76,8 +79,9 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
 
     return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
 
-def run_experiments(n_iterations, n_experiments, base_seed, acq_func_name, kernel_name, test_func_name, dim):
+def run_experiments(n_experiments, base_seed, acq_func_name, kernel_name, test_func_name, dim):
     all_results = []
+    n_iterations = 15*dim
     for i in range(n_experiments):
         seed = base_seed + i
         print(f"\nExperiment {i+1}/{n_experiments} (Seed: {seed})")
@@ -88,11 +92,11 @@ def run_experiments(n_iterations, n_experiments, base_seed, acq_func_name, kerne
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoTorch Bayesian Optimization on various test functions')
-    parser.add_argument('--iterations', type=int, default=50, help='Number of optimization iterations')
+    # parser.add_argument('--iterations', type=int, default=50, help='Number of optimization iterations')
     parser.add_argument('--experiments', type=int, default=1, help='Number of experiments to run')
     parser.add_argument('--seed', type=int, default=42, help='Base random seed')
-    parser.add_argument('--acquisition', type=str, default='LogEI', choices=['EI', 'LogEI', 'PI', 'UCB', 'PM'], 
-                        help='Acquisition function (EI: Expected Improvement, LogEI: Log Expected Improvement, PI: Probability of Improvement, UCB: Upper Confidence Bound, PM: Posterior Mean)')
+    parser.add_argument('--acquisition', type=str, default='LogEI', choices=['EI', 'LogEI', 'PI', 'LogPI', 'UCB', 'PM'], 
+                        help='Acquisition function (EI: Expected Improvement, LogEI: Log Expected Improvement, PI: Probability of Improvement, LogPI, UCB: Upper Confidence Bound, PM: Posterior Mean)')
     parser.add_argument('--kernel', type=str, default='Matern52', choices=['Matern52', 'Matern32', 'RBF', 'RFF'], 
                         help='GP kernel (matern: Matérn kernel, rbf: Radial Basis Function kernel, rff: Random Fourier Features kernel)')
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),

@@ -14,6 +14,7 @@ from botorch.utils.sampling import draw_sobol_samples
 from botorch.acquisition import ExpectedImprovement, qExpectedImprovement, UpperConfidenceBound, ProbabilityOfImprovement, PosteriorMean, LogExpectedImprovement
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_mll
+from botorch.acquisition.analytic import LogProbabilityOfImprovement
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
@@ -38,11 +39,11 @@ def generate_initial_data(n, n_dim, test_func):
     return train_x, exact_obj, best_observed_value
 
 class MyEnsembleModel(EnsembleModel):
-    def __init__(self, train_x, train_y, kernel_types, my_weights = None):
+    def __init__(self, models, weights=None):
         super().__init__()
-        self.models = [fit_model(train_x, train_y, kernel)[0] for kernel in kernel_types]
-        self._num_outputs = train_y.shape[-1]
-        self.my_weights = my_weights
+        self.models = models
+        self._num_outputs = models[0].num_outputs
+        self.weights = weights
 
     def forward(self, X):
         for model in self.models:
@@ -60,7 +61,7 @@ class MyEnsembleModel(EnsembleModel):
             values = values.unsqueeze(-1)
         if output_indices is not None:
             values = values[..., output_indices]
-        posterior = EnsemblePosterior(values=values, my_weights=self.my_weights)
+        posterior = EnsemblePosterior(values=values, my_weights=self.weights)
         if posterior_transform is not None:
             return posterior_transform(posterior)
         return posterior
@@ -130,42 +131,33 @@ def calculate_weights(models, mlls, train_x, train_y):
 def select_model(weights):
     return np.random.choice(len(weights), p=weights)
 
-def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gains=None, kernel_types=[], acq_func_types=[], true_ensemble=False):
+def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gains=None, kernel_types=[], acq_func_types=[], true_ensemble=False, weight_type='uniform'):
     train_x = train_x.to(device)
     train_y = train_y.to(device)
     bounds = bounds.to(device)
 
-    if true_ensemble:
-        if len(kernel_types) == 1:
-            weights = torch.tensor([1.0], dtype=torch.float64, device=device)
-        elif len(kernel_types) == 2:
-            weights = torch.tensor([1.0, 0.0], dtype=torch.float64, device=device)
-        elif len(kernel_types) == 3:
-            weights = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float64, device=device)
-        else:
-            weights = torch.ones(len(kernel_types), dtype=torch.float64, device=device) / len(kernel_types)
+    models = [fit_model(train_x, train_y, kernel)[0] for kernel in kernel_types]
+    mlls = [ExactMarginalLogLikelihood(model.likelihood, model).to(device=device, dtype=torch.float64) for model in models]
 
-        #FOR NOW
-        ensemble_model = MyEnsembleModel(train_x, train_y, kernel_types, None)
-        # ensemble_model = MyEnsembleModel(train_x, train_y, kernel_types)
+    if weight_type == 'uniform':
+        weights = None if true_ensemble else np.ones(len(models)) / len(models)
+    elif weight_type == 'likelihood':
+        weights = torch.tensor(calculate_weights(models, mlls, train_x, train_y), dtype=torch.float64, device=device)
     else:
-        models = []
-        mlls = []
-        for kernel in kernel_types:
-            model, mll = fit_model(train_x, train_y, kernel)
-            models.append(model)
-            mlls.append(mll)
-        weights = calculate_weights(models, mlls, train_x, train_y)
+        raise ValueError(f"Unknown weight type: {weight_type}")
+
+    if true_ensemble:
+        model = MyEnsembleModel(models, weights)
+    else:
         selected_model_index = select_model(weights)
-        selected_model = models[selected_model_index]
+        model = models[selected_model_index]
 
     with gpytorch.settings.cholesky_jitter(1e-2):
-        model = ensemble_model if true_ensemble else selected_model
         LogEI = LogExpectedImprovement(model=model, best_f=best_init_y)
         EI = ExpectedImprovement(model=model, best_f=best_init_y)
-        qEI = qExpectedImprovement(model=model, best_f=best_init_y, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([64])))
         UCB = UpperConfidenceBound(model=model, beta=0.1)
         PI = ProbabilityOfImprovement(model=model, best_f=best_init_y)
+        LogPI = LogProbabilityOfImprovement(model=model, best_f=best_init_y)
         PM = PosteriorMean(model=model)
 
     acquisition = {'LogEI': LogEI, 'EI': EI, 'qEI': qEI, 'UCB': UCB, 'PI': PI, 'PM': PM}
@@ -206,7 +198,7 @@ def update_data(train_x, train_y, new_x, new_y):
     train_y = torch.cat([train_y, new_y]).to(dtype=torch.float64)
     return train_x, train_y
 
-def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, test_func, true_ensemble):
+def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, test_func, true_ensemble, weight_type):
     start = time.time()
     bounds = initial_data["bounds"].to(dtype=torch.float64, device=device)
     train_x, train_y = initial_data["train_x"].to(dtype=torch.float64, device=device), initial_data["train_y"].to(dtype=torch.float64, device=device)
@@ -226,9 +218,8 @@ def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, tes
 
     for t in range(n_iterations):
         new_candidates, chosen_acq_index, selected_model_index, model = get_next_points(
-            train_x, train_y, best_f, bounds, eta, 1, gains, kernel_types, acq_func_types, true_ensemble)
-
-        
+            train_x, train_y, best_f, bounds, eta, 1, gains, kernel_types, acq_func_types, true_ensemble, weight_type)
+             
         new_results = test_func(new_candidates).unsqueeze(-1).to(dtype=torch.float64)
         train_x, train_y = update_data(train_x, train_y, new_candidates, new_results)
         
@@ -266,7 +257,8 @@ def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, tes
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-
+    num_iterations = 15 * args.dim
+    initial_points = int(0.1 * num_iterations)
     test_function, bounds = setup_test_function(args.test_function, args.dim)
     true_max = true_maxima[args.test_function]
     target_func = target_function(test_function)
@@ -278,7 +270,7 @@ def main(args):
         np.random.seed(seed)
         random.seed(seed)
 
-        init_x, init_y, best_init_y = generate_initial_data(10, n_dim=bounds.size(1), test_func=target_func)
+        init_x, init_y, best_init_y = generate_initial_data(initial_points, n_dim=bounds.size(1), test_func=target_func)
         initial_data = {
             "train_x": init_x.to(dtype=torch.float64, device=device),
             "train_y": init_y.to(dtype=torch.float64, device=device),
@@ -288,26 +280,31 @@ def main(args):
         }
 
         s = time.time()
-        experiment_results = run_experiment(args.iterations, args.kernels, args.acquisition, initial_data, target_func, args.true_ensemble)
+        experiment_results = run_experiment(num_iterations, args.kernels, args.acquisition, initial_data, target_func, args.true_ensemble, args.weight_type)
         all_results.append(experiment_results)
         print(f"Time taken: {time.time() - s:.2f} seconds")
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
 
     # Save results
-    np.save(f"{'true' if args.true_ensemble else 'false'}_MMMA_{args.test_function}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {'true' if args.true_ensemble else 'false'}_MMMA_{args.test_function}_optimization_results.npy")
+    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {'true' if args.true_ensemble else 'false'}_{args.weight_type}_MMMA_{args.test_function}_optimization_results.npy")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")
-    parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
+    # parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
     parser.add_argument("--seed", type=int, default=125, help="Starting random seed")
-    parser.add_argument("--acquisition", nargs="+", default=["LogEI"], choices=["LogEI", "EI", "UCB", "PI"], help="List of acquisition functions")
+    parser.add_argument("--acquisition", nargs="+", default=["LogEI"], choices=["LogEI", "EI", "UCB", "PI", "LogPI"], help="List of acquisition functions")
     parser.add_argument("--kernels", nargs="+", default=["Matern52"], choices=["Matern52", "RBF", "Matern32", "RFF"], help="List of kernels")
     parser.add_argument("--experiments", type=int, default=10, help="Number of experiments to run")
     parser.add_argument("--test_function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
     parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
+    parser.add_argument("--weight_type", type=str, default="uniform", choices=["uniform", "likelihood"], help="Type of weights to use for model selection or ensemble")
 
     args = parser.parse_args()
+
+    if args.weight_type not in ["uniform", "likelihood"]:
+        parser.error("--weight_type must be specified as either 'uniform' or 'likelihood'")
+
     main(args)
