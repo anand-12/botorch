@@ -105,9 +105,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    all_results = run_experiments(args.iterations, args.experiments, args.seed, args.acquisition, args.kernel, args.function, args.dim)
+    all_results = run_experiments(args.experiments, args.seed, args.acquisition, args.kernel, args.function, args.dim)
 
     # Save results as .npy file
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"baseline_{args.function}_optimization_results.npy", all_results_np)
-    print(f"Results saved to baseline_{args.function}_optimization_results.npy")
+    np.save(f"baseline_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy", all_results_np)
+    print(f"Results saved to baseline_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy")

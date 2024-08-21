@@ -170,7 +170,7 @@ def main(args):
         all_results.append(experiment_results)
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
 
-    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_{args.function}_optimization_results.npy", np.array(all_results, dtype=object))
+    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_{args.function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_{args.function}_optimization_results.npy")
 
 if __name__ == "__main__":

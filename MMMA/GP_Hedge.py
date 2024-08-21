@@ -172,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument('--kernel', type=str, default='Matern52', 
                         choices=['Matern52', 'RBF', 'Matern32', 'RFF'],
                         help='GP kernel to use')
-    parser.add_argument('--experiments', type=int, default=5, help='Number of experiments to run')
+    parser.add_argument('--experiments', type=int, default=1, help='Number of experiments to run')
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
@@ -191,6 +191,6 @@ if __name__ == "__main__":
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"portfolio_{args.function}_optimization_results.npy", all_results_np)
+    np.save(f"portfolio_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy", all_results_np)
 
-    print(f"Results saved to portfolio_{args.function}_optimization_results.npy")
+    print(f"Results saved to portfolio_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy")

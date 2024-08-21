@@ -286,17 +286,17 @@ def main(args):
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
 
     # Save results
-    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {'true' if args.true_ensemble else 'false'}_{args.weight_type}_MMMA_{args.test_function}_optimization_results.npy")
+    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")
     # parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
-    parser.add_argument("--seed", type=int, default=125, help="Starting random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Starting random seed")
     parser.add_argument("--acquisition", nargs="+", default=["LogEI"], choices=["LogEI", "EI", "UCB", "PI", "LogPI"], help="List of acquisition functions")
     parser.add_argument("--kernels", nargs="+", default=["Matern52"], choices=["Matern52", "RBF", "Matern32", "RFF"], help="List of kernels")
-    parser.add_argument("--experiments", type=int, default=10, help="Number of experiments to run")
+    parser.add_argument("--experiments", type=int, default=1, help="Number of experiments to run")
     parser.add_argument("--test_function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
     parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
