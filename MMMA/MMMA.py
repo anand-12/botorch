@@ -15,28 +15,13 @@ from botorch.acquisition import ExpectedImprovement, qExpectedImprovement, Upper
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
+from botorch.models.ensemble import EnsembleModel
+from botorch.posteriors.ensemble import EnsemblePosterior
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
 botorch.settings.debug = True
 warnings.filterwarnings("ignore")
-
-from botorch.models.ensemble import EnsembleModel
-from botorch.posteriors.ensemble import EnsemblePosterior
-
-def target_function(test_func):
-    def wrapper(individuals):
-        result = []
-        for x in individuals:
-            result.append(-1.0 * test_func(x))
-        return torch.tensor(result, dtype=torch.float64, device=device)
-    return wrapper
-
-def generate_initial_data(n, n_dim, test_func):
-    train_x = draw_sobol_samples(bounds=torch.tensor([[0.0] * n_dim, [1.0] * n_dim], device=device), n=n, q=1).squeeze(1)
-    exact_obj = torch.tensor([test_func(x.unsqueeze(0)) for x in train_x], dtype=torch.float64, device=device).unsqueeze(-1)
-    best_observed_value = exact_obj.max().item()
-    return train_x, exact_obj, best_observed_value
 
 class MyEnsembleModel(EnsembleModel):
     def __init__(self, models, weights=None):
@@ -49,15 +34,12 @@ class MyEnsembleModel(EnsembleModel):
         for model in self.models:
             model.eval()
         outputs = [model(X) for model in self.models]
-        # means = torch.stack([output.mean for output in outputs], dim=0)
         samples = torch.stack([output.rsample() for output in outputs], dim=0)
         return samples
 
     def posterior(self, X, output_indices=None, posterior_transform=None, **kwargs):
         values = self.forward(X)
-        # Ensure values is 3D: [num_models, num_samples, num_outputs]
         if values.dim() == 2:
-            # print("anand cabron")
             values = values.unsqueeze(-1)
         if output_indices is not None:
             values = values[..., output_indices]
@@ -78,24 +60,14 @@ def fit_model(train_x, train_y, kernel_type):
     train_y = train_y.to(dtype=torch.float64, device=device)
     ard_num_dims = train_x.shape[-1]
 
-    if kernel_type == 'RBF':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
-    elif kernel_type == 'Matern52':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
-    elif kernel_type == 'Matern32':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
-    elif kernel_type == 'RQ':
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RQKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
-    elif kernel_type == 'RFF':
-        covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RFFKernel(num_samples=1024, num_dims=ard_num_dims)
-        ).to(device=device, dtype=torch.float64)
-    elif kernel_type == "ConstantKernel":
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.ConstantKernel()).to(device=device, dtype=torch.float64)
-    elif kernel_type == "PeriodicKernel":
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.PeriodicKernel(ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
-    else:
-        raise ValueError(f"Unknown kernel type: {kernel_type}")
+    kernel_map = {
+        'RBF': gpytorch.kernels.RBFKernel,
+        'Matern52': lambda ard_num_dims: gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=ard_num_dims),
+        'Matern32': lambda ard_num_dims: gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims),
+        'RFF': lambda ard_num_dims: gpytorch.kernels.RFFKernel(num_samples=1024, num_dims=ard_num_dims)
+    }
+
+    covar_module = gpytorch.kernels.ScaleKernel(kernel_map[kernel_type](ard_num_dims=ard_num_dims)).to(device=device, dtype=torch.float64)
 
     class CustomGP(SingleTaskGP):
         def __init__(self, train_x, train_y):
@@ -113,7 +85,7 @@ def fit_model(train_x, train_y, kernel_type):
 
 def calculate_weights(models, mlls, train_x, train_y):
     log_likelihoods = []
-    for i, (model, mll) in enumerate(zip(models, mlls)):
+    for model, mll in zip(models, mlls):
         if model is not None and mll is not None:         
             with gpytorch.settings.cholesky_jitter(1e-2):
                 ll = mll(model(train_x), train_y).sum().item()
@@ -131,7 +103,7 @@ def calculate_weights(models, mlls, train_x, train_y):
 def select_model(weights):
     return np.random.choice(len(weights), p=weights)
 
-def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gains=None, kernel_types=[], acq_func_types=[], true_ensemble=False, weight_type='uniform'):
+def get_next_points(train_x, train_y, best_observed_value, bounds, eta, n_points=1, gains=None, kernel_types=[], acq_func_types=[], true_ensemble=False, weight_type='uniform'):
     train_x = train_x.to(device)
     train_y = train_y.to(device)
     bounds = bounds.to(device)
@@ -152,15 +124,13 @@ def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gain
         selected_model_index = select_model(weights)
         model = models[selected_model_index]
 
-    with gpytorch.settings.cholesky_jitter(1e-2):
-        LogEI = LogExpectedImprovement(model=model, best_f=best_init_y)
-        EI = ExpectedImprovement(model=model, best_f=best_init_y)
-        UCB = UpperConfidenceBound(model=model, beta=0.1)
-        PI = ProbabilityOfImprovement(model=model, best_f=best_init_y)
-        LogPI = LogProbabilityOfImprovement(model=model, best_f=best_init_y)
-        PM = PosteriorMean(model=model)
-
-    acquisition = {'LogEI': LogEI, 'EI': EI, 'qEI': qEI, 'UCB': UCB, 'PI': PI, 'PM': PM}
+    acquisition = {
+        'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
+        'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
+        'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_observed_value),
+        'UCB': UpperConfidenceBound(model=model, beta=0.1),
+        'PI': ProbabilityOfImprovement(model=model, best_f=best_observed_value)
+    }
     acquisition_functions = [acquisition[acq] for acq in acq_func_types]
     
     candidates_list = []
@@ -192,53 +162,51 @@ def get_next_points(train_x, train_y, best_init_y, bounds, eta, n_points=1, gain
 
     return candidates_list[chosen_acq_index], chosen_acq_index, selected_model_index if not true_ensemble else None, model
 
-
-def update_data(train_x, train_y, new_x, new_y):
-    train_x = torch.cat([train_x, new_x]).to(dtype=torch.float64)
-    train_y = torch.cat([train_y, new_y]).to(dtype=torch.float64)
-    return train_x, train_y
-
-def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, test_func, true_ensemble, weight_type):
+def run_experiment(n_iterations, kernel_types, acq_func_types, function, bounds, true_max, true_ensemble, weight_type):
     start = time.time()
-    bounds = initial_data["bounds"].to(dtype=torch.float64, device=device)
-    train_x, train_y = initial_data["train_x"].to(dtype=torch.float64, device=device), initial_data["train_y"].to(dtype=torch.float64, device=device)
-    best_f = initial_data["best_init_y"]
-    true_maximum = initial_data["true_maximum"]
+    bounds = bounds.to(dtype=torch.float64, device=device)
+
+    # Generate initial data
+    initial_points = int(0.1 * n_iterations)
+    train_x = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
+    train_y = function(train_x).unsqueeze(-1)
+    best_observed_value = train_y.max().item()
     
     gains = np.zeros(len(acq_func_types), dtype=np.float64)
     eta = 0.1  
 
-    best_observed_values = []
+    best_observed_values = [best_observed_value]
     chosen_acq_functions = []
     selected_models = []
-    gap_metrics = []
-    simple_regrets = []
-    cumulative_regret = 0.0
-    cumulative_regrets = []
+    gap_metrics = [gap_metric(best_observed_value, best_observed_value, true_max)]
+    simple_regrets = [true_max - best_observed_value]
+    cumulative_regret = true_max - best_observed_value
+    cumulative_regrets = [cumulative_regret]
 
     for t in range(n_iterations):
         new_candidates, chosen_acq_index, selected_model_index, model = get_next_points(
-            train_x, train_y, best_f, bounds, eta, 1, gains, kernel_types, acq_func_types, true_ensemble, weight_type)
+            train_x, train_y, best_observed_value, bounds, eta, 1, gains, kernel_types, acq_func_types, true_ensemble, weight_type)
              
-        new_results = test_func(new_candidates).unsqueeze(-1).to(dtype=torch.float64)
-        train_x, train_y = update_data(train_x, train_y, new_candidates, new_results)
+        new_y = function(new_candidates).unsqueeze(-1)
+        train_x = torch.cat([train_x, new_candidates])
+        train_y = torch.cat([train_y, new_y])
         
-        current_best_f = train_y.max().item()
-        best_f = max(best_f, current_best_f)  
-        best_observed_values.append(best_f)
+        current_best_y = new_y.max().item()
+        best_observed_value = max(best_observed_value, current_best_y)
+        best_observed_values.append(best_observed_value)
         chosen_acq_functions.append(chosen_acq_index)
         selected_models.append(selected_model_index)
         
-        g_i = gap_metric(initial_data["best_init_y"], best_f, true_maximum)
+        g_i = gap_metric(best_observed_values[0], best_observed_value, true_max)
         gap_metrics.append(g_i)
         
-        simple_regret = true_maximum - best_f
+        simple_regret = true_max - best_observed_value
         simple_regrets.append(simple_regret)
         
-        cumulative_regret += (true_maximum - current_best_f)
+        cumulative_regret += (true_max - current_best_y)
         cumulative_regrets.append(cumulative_regret)
         
-        print(f"Iteration {t+1}/{n_iterations}: Best value = {best_f:.4f}, Simple Regret = {simple_regret:.4f}, Cumulative Regret = {cumulative_regret:.4f}")
+        print(f"Iteration {t+1}/{n_iterations}: Best value = {best_observed_value:.4f}, Simple Regret = {simple_regret:.4f}, Cumulative Regret = {cumulative_regret:.4f}")
         
         if true_ensemble:
             posterior = model.posterior(new_candidates)
@@ -248,20 +216,15 @@ def run_experiment(n_iterations, kernel_types, acq_func_types, initial_data, tes
 
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
+
     execution_time = time.time() - start
-    # return (best_observed_values, chosen_acq_functions, selected_models, true_maximum, 
-    #         gap_metrics, execution_time, simple_regrets, cumulative_regrets)
-    # print(f"Type of best_observed_values: {type(best_observed_values)} type of gap_metrics: {type(gap_metrics)} type of simple_regrets: {type(simple_regrets)} type of cumulative_regrets: {type(cumulative_regrets)}")
     return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-    num_iterations = 15 * args.dim
-    initial_points = int(0.1 * num_iterations)
-    test_function, bounds = setup_test_function(args.test_function, args.dim)
-    true_max = true_maxima[args.test_function]
-    target_func = target_function(test_function)
+    num_iterations = 30 * args.dim
+    function, bounds = setup_test_function(args.function, args.dim)
+    true_max = true_maxima[args.function]
 
     all_results = []
     for seed in range(args.seed, args.seed + args.experiments):
@@ -270,34 +233,25 @@ def main(args):
         np.random.seed(seed)
         random.seed(seed)
 
-        init_x, init_y, best_init_y = generate_initial_data(initial_points, n_dim=bounds.size(1), test_func=target_func)
-        initial_data = {
-            "train_x": init_x.to(dtype=torch.float64, device=device),
-            "train_y": init_y.to(dtype=torch.float64, device=device),
-            "best_init_y": best_init_y,
-            "bounds": bounds.to(dtype=torch.float64, device=device),
-            "true_maximum": true_max
-        }
-
         s = time.time()
-        experiment_results = run_experiment(num_iterations, args.kernels, args.acquisition, initial_data, target_func, args.true_ensemble, args.weight_type)
+        experiment_results = run_experiment(num_iterations, args.kernels, args.acquisition, function, bounds, true_max, args.true_ensemble, args.weight_type)
         all_results.append(experiment_results)
         print(f"Time taken: {time.time() - s:.2f} seconds")
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
 
+    kernel_str = "_".join(args.kernels)
+    acq_str = "_".join(args.acquisition)
     # Save results
-    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_{args.test_function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy")
-
+    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")
-    # parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
     parser.add_argument("--seed", type=int, default=42, help="Starting random seed")
     parser.add_argument("--acquisition", nargs="+", default=["LogEI"], choices=["LogEI", "EI", "UCB", "PI", "LogPI"], help="List of acquisition functions")
     parser.add_argument("--kernels", nargs="+", default=["Matern52"], choices=["Matern52", "RBF", "Matern32", "RFF"], help="List of kernels")
     parser.add_argument("--experiments", type=int, default=1, help="Number of experiments to run")
-    parser.add_argument("--test_function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
+    parser.add_argument("--function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
     parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
     parser.add_argument("--weight_type", type=str, default="uniform", choices=["uniform", "likelihood"], help="Type of weights to use for model selection or ensemble")

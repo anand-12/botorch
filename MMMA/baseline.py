@@ -10,7 +10,7 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
-import warnings
+import warnings, random
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
 
 
@@ -32,13 +32,13 @@ def get_kernel(kernel_name, dim):
     return ScaleKernel(base_kernels[kernel_name])
 
 def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_func_name, dim):
-    torch.manual_seed(seed)
+
     objective, bounds = setup_test_function(test_func_name, dim)
     bounds = bounds.to(dtype=dtype, device=device)
     f_star = true_maxima[test_func_name]
     num_initial_points = int(0.1 * n_iterations)
     train_X = draw_sobol_samples(bounds=bounds, n=num_initial_points, q=1).squeeze(1)
-    train_Y = -objective(train_X).unsqueeze(-1)
+    train_Y = objective(train_X).unsqueeze(-1)
     
     best_observed_value = train_Y.max().item()
     f_start = best_observed_value
@@ -63,7 +63,7 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
         }[acq_func_name]
         
         new_x, _ = optimize_acqf(acq_function=acq_func, bounds=bounds, q=1, num_restarts=10, raw_samples=512)
-        new_y = -objective(new_x).unsqueeze(-1)
+        new_y = objective(new_x).unsqueeze(-1)
         
         train_X = torch.cat([train_X, new_x])
         train_Y = torch.cat([train_Y, new_y])
@@ -81,10 +81,14 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
 
 def run_experiments(n_experiments, base_seed, acq_func_name, kernel_name, test_func_name, dim):
     all_results = []
-    n_iterations = 15*dim
-    for i in range(n_experiments):
-        seed = base_seed + i
-        print(f"\nExperiment {i+1}/{n_experiments} (Seed: {seed})")
+    n_iterations = 30*dim
+    for seed in range(base_seed, base_seed+n_experiments):
+
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
+        print(f"\nExperiment Seed: {seed})")
         best_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_func_name, dim)
         all_results.append([best_values, gap_metrics, simple_regrets, cumulative_regrets])
         print(f"Best value: {best_values[-1]:.4f}")
@@ -109,5 +113,5 @@ if __name__ == "__main__":
 
     # Save results as .npy file
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"baseline_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy", all_results_np)
-    print(f"Results saved to baseline_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy")
+    np.save(f"baseline_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{args.acquisition}_optimization_results.npy", all_results_np)
+    print(f"Results saved to baseline_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{args.acquisition}_optimization_results.npy")

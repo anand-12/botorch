@@ -21,7 +21,7 @@ def plot_results():
         print(function)
         data = np.load(file, allow_pickle=True)
         key = f"{exp_type}_{'+'.join(kernels)}_{'+'.join(acquisitions)}"
-        results[key] = np.median(data, axis=0)  # Take median across experiments
+        results[key] = np.mean(data, axis=0)  # Take median across experiments
     
     metrics = ["Maximum Value", "Gap Metric", "Simple Regret", "Cumulative Regret"]
     
@@ -51,12 +51,7 @@ def plot_results():
             plt.plot(exp_results[i], color=color, label=exp_name)
         
         plt.xlabel("Iterations")
-        if metric == "Simple Regret" or metric == "Cumulative Regret":
-            plt.yscale('log')
-            plt.ylabel("Log(Simple Regret)")
-        else:
-            plt.ylabel(metric)
-
+        plt.ylabel(metric)
         plt.title(f"{function} - {metric} vs Iterations")
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         

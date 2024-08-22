@@ -13,7 +13,7 @@ from botorch.acquisition.analytic import PosteriorMean
 from botorch.models.ensemble import EnsembleModel
 from botorch.posteriors.ensemble import EnsemblePosterior
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
-
+import random
 
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,7 +80,7 @@ def gap_metric(f_start, f_current, f_star):
 def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensemble, acq_func_name, weight_type):
     initial_points = int(0.1 * n_iterations)
     train_x = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
-    train_y = -function(train_x).unsqueeze(-1)
+    train_y = function(train_x).unsqueeze(-1)
     best_init_y = train_y.max().item()
     best_observed_value = best_init_y
 
@@ -140,7 +140,7 @@ def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensem
             raw_samples=512,
         )
 
-        new_y = -function(new_x).unsqueeze(-1)
+        new_y = function(new_x).unsqueeze(-1)
         train_x = torch.cat([train_x, new_x])
         train_y = torch.cat([train_y, new_y])
         best_observed_value = train_y.max().item()
@@ -155,23 +155,23 @@ def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensem
     return max_values, gap_metrics, simple_regrets, cumulative_regrets
 
 def main(args):
-    num_iterations = 15*args.dim
+    num_iterations = 30*args.dim
     function, bounds = setup_test_function(args.function, args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
     true_max = true_maxima[args.function]
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
     all_results = []
     for i in range(args.experiments):
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        random.seed(args.seed)
         print(f"\nExperiment {i+1}/{args.experiments}")
         experiment_results = run_experiment(num_iterations, args.kernels, function, bounds, true_max, args.true_ensemble, args.acquisition, args.weight_type)
         all_results.append(experiment_results)
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
-
-    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_{args.function}{args.dim}_{args.kernels}_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_{args.function}_optimization_results.npy")
+    kernel_str = "_".join(args.kernels)
+    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")

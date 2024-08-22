@@ -17,7 +17,7 @@ from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
 from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
 from botorch.acquisition.analytic import PosteriorMean
-import warnings
+import warnings, random
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,13 +88,13 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
     return candidates_list[chosen_acq_index], chosen_acq_index, single_model
 
 def run_experiment(args):
-    num_iterations = 15*args.dim
+    num_iterations = 30*args.dim
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
     
     train_X = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
-    train_Y = -objective(train_X).unsqueeze(-1)
+    train_Y = objective(train_X).unsqueeze(-1)
     best_init_y = train_Y.max().item()
     best_train_Y = best_init_y
     
@@ -112,7 +112,7 @@ def run_experiment(args):
         new_candidates, chosen_acq_index, single_model = get_next_points(
             objective, train_X, train_Y, best_train_Y, bounds, args.acquisition, args.kernel, 1, gains
         )
-        new_Y = -objective(new_candidates).unsqueeze(-1)
+        new_Y = objective(new_candidates).unsqueeze(-1)
 
         train_X = torch.cat([train_X, new_candidates])
         train_Y = torch.cat([train_Y, new_Y])
@@ -178,19 +178,21 @@ if __name__ == "__main__":
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
 
     args = parser.parse_args()
-
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    acquisition_list = args.acquisition if isinstance(args.acquisition, list) else [args.acquisition]
+    acquisition_str = "_".join(acquisition_list)
 
     all_results = []
 
     for i in range(args.experiments):
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        random.seed(args.seed)
         print(f"Running experiment {i+1}/{args.experiments}")
         experiment_results = run_experiment(args)
         all_results.append(experiment_results)
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"portfolio_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy", all_results_np)
+    np.save(f"portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
 
-    print(f"Results saved to portfolio_{args.function}{args.dim}_{args.kernel}_{args.acquisition}_optimization_results.npy")
+    print(f"portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy")
