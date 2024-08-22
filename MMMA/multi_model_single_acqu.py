@@ -8,12 +8,12 @@ from botorch.acquisition import ExpectedImprovement, ProbabilityOfImprovement, U
 from botorch.optim import optimize_acqf
 from botorch.utils.sampling import draw_sobol_samples
 from botorch_test_functions import setup_test_function, true_maxima
-import warnings
+import warnings, os
 from botorch.acquisition.analytic import PosteriorMean
 from botorch.models.ensemble import EnsembleModel
 from botorch.posteriors.ensemble import EnsemblePosterior
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
-import random
+import random, time
 
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -166,9 +166,11 @@ def run_experiments(args):
         torch.manual_seed(seed)
         random.seed(seed)
         print(f"\nExperiment with seed {seed}")
-        experiment_results = bayesian_optimization(args)
-        all_results.append(experiment_results)
-        print(f"Final Best value: {experiment_results[0][-1]:.4f}")
+        start = time.time()
+        max_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        end = time.time()
+        experiment_time = end - start
+        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
     return all_results
 
 if __name__ == "__main__":
@@ -194,5 +196,6 @@ if __name__ == "__main__":
     
     kernel_str = "_".join(args.kernels)
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
+    os.makedirs(f"./{args.function}", exist_ok=True)
+    np.save(f"./{args.function}/{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")

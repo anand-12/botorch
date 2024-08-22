@@ -2,7 +2,7 @@ import argparse
 import botorch
 import gpytorch
 import torch
-import numpy as np
+import numpy as np, os
 import time
 import warnings
 import random
@@ -221,9 +221,11 @@ def run_experiments(args):
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        experiment_results = bayesian_optimization(args)
-        all_results.append(experiment_results)
-        print(f"Final Best value: {experiment_results[0][-1]:.4f}")
+        start = time.time()
+        best_observed_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        end = time.time()
+        experiment_time = end - start
+        all_results.append([best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
 
     return all_results
 
@@ -247,5 +249,6 @@ if __name__ == "__main__":
     
     kernel_str = "_".join(args.kernels)
     acq_str = "_".join(args.acquisition)
-    np.save(f"{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
+    os.makedirs(f"./{args.function}", exist_ok=True)
+    np.save(f"./{args.function}/{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy")

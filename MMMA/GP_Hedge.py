@@ -17,7 +17,7 @@ from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
 from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
 from botorch.acquisition.analytic import PosteriorMean
-import warnings, random
+import warnings, random, os, time
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,7 +88,7 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
     return candidates_list[chosen_acq_index], chosen_acq_index, single_model
 
 def bayesian_optimization(args):
-    num_iterations = 30*args.dim
+    num_iterations = 30 * args.dim
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
@@ -137,8 +137,15 @@ def run_experiments(args):
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        experiment_results = bayesian_optimization(args)
-        all_results.append(experiment_results)
+        
+        start_time = time.time()
+        max_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        end_time = time.time()
+        
+        experiment_time = end_time - start_time
+        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
+        
+        print(f"Experiment {seed} completed in {experiment_time:.2f} seconds")
 
     return all_results
 
@@ -164,7 +171,8 @@ if __name__ == "__main__":
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    np.save(f"portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
+    os.makedirs(f"./{args.function}", exist_ok=True)
+    np.save(f"./{args.function}/portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
 
     print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy")
 
