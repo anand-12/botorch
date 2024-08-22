@@ -79,17 +79,17 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
 
     return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
 
-def run_experiments(n_experiments, base_seed, acq_func_name, kernel_name, test_func_name, dim):
+def run_experiments(args):
     all_results = []
-    n_iterations = 30*dim
-    for seed in range(base_seed, base_seed+n_experiments):
+    n_iterations = 30*args.dim
+    for seed in range(args.seed, args.seed+args.experiments):
 
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
 
         print(f"\nExperiment Seed: {seed})")
-        best_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_func_name, dim)
+        best_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(n_iterations, seed, args.acquisition, args.kernel, args.function, args.dim)
         all_results.append([best_values, gap_metrics, simple_regrets, cumulative_regrets])
         print(f"Best value: {best_values[-1]:.4f}")
     return all_results
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    all_results = run_experiments(args.experiments, args.seed, args.acquisition, args.kernel, args.function, args.dim)
+    all_results = run_experiments(args)
 
     # Save results as .npy file
     all_results_np = np.array(all_results, dtype=object)

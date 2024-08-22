@@ -14,6 +14,7 @@ from botorch.test_functions import (
     Powell,
     Rastrigin,
     Rosenbrock,
+    Shekel,
     SixHumpCamel,
     StyblinskiTang,
     ThreeHumpCamel
@@ -37,6 +38,7 @@ def setup_test_function(func_name, dim=2):
         "Powell": (Powell(dim=dim), torch.tensor([[-4] * dim, [5] * dim])),
         "Rastrigin": (Rastrigin(dim=dim, negate=True), torch.tensor([[-5.12] * dim, [5.12] * dim])),
         "Rosenbrock": (Rosenbrock(dim=dim), torch.tensor([[-5] * dim, [10] * dim])),
+        "Shekel": (Shekel(negate=True), torch.tensor([[0] * dim, [10] * dim])),
         "SixHumpCamel": (SixHumpCamel(negate=True), torch.tensor([[-3, -2], [3, 2]])),
         "StyblinskiTang": (StyblinskiTang(dim=dim), torch.tensor([[-5] * dim, [5] * dim])),
         "ThreeHumpCamel": (ThreeHumpCamel(), torch.tensor([[-5, -5], [5, 5]]))
@@ -64,6 +66,7 @@ true_maxima = {
     "Powell": 0.0,
     "Rastrigin": 0.0,
     "Rosenbrock": 0.0,
+    "Shekel": 10.5363,
     "SixHumpCamel": 1.0316,
     "StyblinskiTang": 39.16599 * 2,  # for dim=2, scales with dimension
     "ThreeHumpCamel": 0.0

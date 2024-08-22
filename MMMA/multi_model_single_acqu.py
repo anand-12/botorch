@@ -77,8 +77,13 @@ def select_model(weights):
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensemble, acq_func_name, weight_type):
+def bayesian_optimization(args):
+    n_iterations = 30 * args.dim
     initial_points = int(0.1 * n_iterations)
+    function, bounds = setup_test_function(args.function, args.dim)
+    bounds = bounds.to(dtype=dtype, device=device)
+    true_max = true_maxima[args.function]
+
     train_x = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
     train_y = function(train_x).unsqueeze(-1)
     best_init_y = train_y.max().item()
@@ -97,29 +102,30 @@ def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensem
     }
 
     for i in range(n_iterations):
+        print(f"Running iteration {i+1}/{n_iterations}, Best value = {best_observed_value:.4f}")
         models = []
         mlls = []
-        for kernel in kernels:
+        for kernel in args.kernels:
             model, mll = fit_model(train_x, train_y, kernel_map[kernel])
             models.append(model)
             mlls.append(mll)
 
-        if true_ensemble:
-            if weight_type == 'uniform':
+        if args.true_ensemble:
+            if args.weight_type == 'uniform':
                 weights = None
-            elif weight_type == 'likelihood':
+            elif args.weight_type == 'likelihood':
                 weights = torch.tensor(calculate_weights(models, mlls, train_x, train_y), dtype=torch.float64, device=device)
             else:
-                raise ValueError(f"Unknown weight type: {weight_type}")
+                raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = MyEnsembleModel(models, weights)
         else:
-            if weight_type == 'uniform':
+            if args.weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
-            elif weight_type == 'likelihood':
+            elif args.weight_type == 'likelihood':
                 weights = calculate_weights(models, mlls, train_x, train_y)
                 selected_model_index = select_model(weights)
             else:
-                raise ValueError(f"Unknown weight type: {weight_type}")
+                raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = models[selected_model_index]
 
         acq_function_map = {
@@ -130,7 +136,7 @@ def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensem
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PM': PosteriorMean(model=model)
         }
-        acq_function = acq_function_map[acq_func_name]
+        acq_function = acq_function_map[args.acquisition]
 
         new_x, _ = optimize_acqf(
             acq_function=acq_function,
@@ -149,34 +155,25 @@ def run_experiment(n_iterations, kernels, function, bounds, true_max, true_ensem
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - new_y.item()))
-        
-        print(f"Iteration {i+1}: Best value = {best_observed_value:.4f}")
     
     return max_values, gap_metrics, simple_regrets, cumulative_regrets
 
-def main(args):
-    num_iterations = 30*args.dim
-    function, bounds = setup_test_function(args.function, args.dim)
-    bounds = bounds.to(dtype=dtype, device=device)
-    true_max = true_maxima[args.function]
+def run_experiments(args):
 
     all_results = []
-    for i in range(args.experiments):
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
-        random.seed(args.seed)
-        print(f"\nExperiment {i+1}/{args.experiments}")
-        experiment_results = run_experiment(num_iterations, args.kernels, function, bounds, true_max, args.true_ensemble, args.acquisition, args.weight_type)
+    for seed in range(args.seed, args.seed + args.experiments):
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        random.seed(seed)
+        print(f"\nExperiment with seed {seed}")
+        experiment_results = bayesian_optimization(args)
         all_results.append(experiment_results)
         print(f"Final Best value: {experiment_results[0][-1]:.4f}")
-    kernel_str = "_".join(args.kernels)
-    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")
+    return all_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bayesian Optimization Experiment")
-    # parser.add_argument("--iterations", type=int, default=50, help="Number of iterations")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Starting random seed")
     parser.add_argument("--kernels", nargs="+", default=["RBF"], 
                         choices=["RBF", "Matern52", "Matern32", "RFF"], 
                         help="List of kernels to use")
@@ -193,4 +190,8 @@ if __name__ == "__main__":
     if args.weight_type not in ["uniform", "likelihood"]:
         parser.error("--weight_type must be specified as either 'uniform' or 'likelihood'")
 
-    main(args)
+    all_results = run_experiments(args)
+    
+    kernel_str = "_".join(args.kernels)
+    np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")
