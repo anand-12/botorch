@@ -26,14 +26,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def setup_test_function(func_name, dim=2):
     function_configs = {
-        "Ackley": (Ackley(dim=dim), torch.tensor([[-32.768] * dim, [32.768] * dim])),
-        "Beale": (Beale(), torch.tensor([[-4.5, -4.5], [4.5, 4.5]])),
-        "Branin": (Branin(), torch.tensor([[-5, 0], [10, 15]])),
-        "Bukin": (Bukin(), torch.tensor([[-15, -3], [-5, 3]])),
+        "Ackley": (Ackley(dim=dim, negate=True), torch.tensor([[-32.768] * dim, [32.768] * dim])),
+        "Beale": (Beale(negate=True), torch.tensor([[-4.5, -4.5], [4.5, 4.5]])),
+        "Branin": (Branin(negate=True), torch.tensor([[-5, 0], [10, 15]])),
+        "Bukin": (Bukin(negate=True), torch.tensor([[-15, -3], [-5, 3]])),
         "Cosine8": (Cosine8(), torch.tensor([[-1] * 8, [1] * 8])),
         "DropWave": (DropWave(negate=True), torch.tensor([[-5.12, -5.12], [5.12, 5.12]])),
         "DixonPrice": (DixonPrice(dim=dim, negate=True), torch.tensor([[-10] * dim, [10] * dim])),
-        "EggHolder": (EggHolder(negate=True), torch.tensor([[-512, -512], [512, 512]])),
+        "EggHolder": (EggHolder(negate=True), torch.tensor([[-512, -512], [512, 512]])), #CHECKED TILL HERE, CHECK BELOW FOR NEGATE
         "Griewank": (Griewank(dim=dim), torch.tensor([[-600] * dim, [600] * dim])),
         "Hartmann": (Hartmann(dim=6, negate=True), torch.tensor([[0] * 6, [1] * 6])),
         "HolderTable": (HolderTable(negate=True), torch.tensor([[-10, -10], [10, 10]])),
@@ -58,7 +58,7 @@ def setup_test_function(func_name, dim=2):
 true_maxima = {
     "Ackley": 0.0,
     "Beale": 0.0,
-    "Branin": 0.397887,
+    "Branin": -0.397887,
     "Bukin": 0.0,
     "Cosine8": 0.8,
     "DropWave": 1.0,
