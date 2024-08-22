@@ -11,32 +11,94 @@ from botorch.acquisition import (
     ProbabilityOfImprovement,
     LogExpectedImprovement
 )
-from botorch.acquisition.analytic import LogProbabilityOfImprovement, PosteriorMean
+from botorch.acquisition.analytic import LogProbabilityOfImprovement
 from botorch.optim import optimize_acqf
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
-from gpytorch.kernels import MaternKernel, RBFKernel, ScaleKernel, RFFKernel
-import warnings
-import random
-
+from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
+from botorch.acquisition.analytic import PosteriorMean
+import warnings, random
 warnings.filterwarnings("ignore")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
 
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-def bayesian_optimization(args):
-    num_iterations = 30 * args.dim
-    initial_points = int(0.1 * num_iterations)
-    function, bounds = setup_test_function(args.function, dim=args.dim)
-    bounds = bounds.to(dtype=dtype, device=device)
-    true_max = true_maxima[args.function]
+def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None):
+    base_kernel = {
+        'Matern52': MaternKernel(nu=2.5, ard_num_dims=train_X.shape[-1]),
+        'RBF': RBFKernel(ard_num_dims=train_X.shape[-1]),
+        'Matern32': MaternKernel(nu=1.5, ard_num_dims=train_X.shape[-1]),
+        'RFF': RFFKernel(num_samples=1000, ard_num_dims=train_X.shape[-1])
+    }[kernel]
+    
+    single_model = SingleTaskGP(train_X, train_Y, covar_module=ScaleKernel(base_kernel))
+    mll = ExactMarginalLogLikelihood(single_model.likelihood, single_model)
+    fit_gpytorch_mll(mll)
 
+    acq_function_map = {
+        'EI': ExpectedImprovement(model=single_model, best_f=best_train_Y),
+        'UCB': UpperConfidenceBound(model=single_model, beta=0.1),
+        'PI': ProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
+        'LogEI': LogExpectedImprovement(model=single_model, best_f=best_train_Y),
+        'LogPI': LogProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
+        'PM': PosteriorMean(model=single_model)
+    }
+
+    candidates_list = []
+    for acq_name in acq_functions:
+        if acq_name in acq_function_map:
+            acq_function = acq_function_map[acq_name]
+            candidates, _ = optimize_acqf(
+                acq_function=acq_function,
+                bounds=bounds,
+                q=n_points,
+                num_restarts=20,
+                raw_samples=512,
+                options={"batch_limit": 5, "maxiter": 200}
+            )
+            candidates_list.append(candidates)
+
+    if not candidates_list:
+        print("Warning: No valid acquisition functions. Using Expected Improvement.")
+        ei = ExpectedImprovement(model=single_model, best_f=best_train_Y)
+        candidates, _ = optimize_acqf(
+            acq_function=ei,
+            bounds=bounds,
+            q=n_points,
+            num_restarts=20,
+            raw_samples=512,
+            options={"batch_limit": 5, "maxiter": 200}
+        )
+        candidates_list = [candidates]
+        acq_functions = ['EI']
+
+    if gains is None or len(gains) == 0:
+        chosen_acq_index = np.random.choice(len(candidates_list))
+    else:
+        eta = 0.1
+        logits = np.array(gains[:len(candidates_list)])
+        logits -= np.max(logits)
+        exp_logits = np.exp(eta * logits)
+        probs = exp_logits / np.sum(exp_logits)
+        chosen_acq_index = np.random.choice(len(candidates_list), p=probs)
+
+    return candidates_list[chosen_acq_index], chosen_acq_index, single_model
+
+def bayesian_optimization(args):
+    num_iterations = 30*args.dim
+    initial_points = int(0.1 * num_iterations)
+    objective, bounds = setup_test_function(args.function, dim=args.dim)
+    bounds = bounds.to(dtype=dtype, device=device)
+    
     train_X = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
-    train_Y = function(train_X).unsqueeze(-1)
+    train_Y = objective(train_X).unsqueeze(-1)
     best_init_y = train_Y.max().item()
     best_train_Y = best_init_y
+    
+    true_max = true_maxima[args.function]
     
     gains = np.zeros(len(args.acquisition))
     max_values = [best_train_Y]
@@ -45,69 +107,12 @@ def bayesian_optimization(args):
     cumulative_regrets = [true_max - best_train_Y]
     chosen_acq_functions = []
 
-    base_kernel = {
-        'Matern52': MaternKernel(nu=2.5, ard_num_dims=train_X.shape[-1]),
-        'RBF': RBFKernel(ard_num_dims=train_X.shape[-1]),
-        'Matern32': MaternKernel(nu=1.5, ard_num_dims=train_X.shape[-1]),
-        'RFF': RFFKernel(num_samples=1000, ard_num_dims=train_X.shape[-1])
-    }[args.kernel]
-
     for i in range(num_iterations):
         print(f"Running iteration {i+1}/{num_iterations}, Best value = {best_train_Y:.4f}")
-        
-        single_model = SingleTaskGP(train_X, train_Y, covar_module=ScaleKernel(base_kernel))
-        mll = ExactMarginalLogLikelihood(single_model.likelihood, single_model)
-        fit_gpytorch_mll(mll)
-
-        acq_function_map = {
-            'EI': ExpectedImprovement(model=single_model, best_f=best_train_Y),
-            'UCB': UpperConfidenceBound(model=single_model, beta=0.1),
-            'PI': ProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
-            'LogEI': LogExpectedImprovement(model=single_model, best_f=best_train_Y),
-            'LogPI': LogProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
-            'PM': PosteriorMean(model=single_model)
-        }
-
-        candidates_list = []
-        for acq_name in args.acquisition:
-            if acq_name in acq_function_map:
-                acq_function = acq_function_map[acq_name]
-                candidates, _ = optimize_acqf(
-                    acq_function=acq_function,
-                    bounds=bounds,
-                    q=1,
-                    num_restarts=20,
-                    raw_samples=512,
-                    options={"batch_limit": 5, "maxiter": 200}
-                )
-                candidates_list.append(candidates)
-
-        if not candidates_list:
-            print("Warning: No valid acquisition functions. Using Expected Improvement.")
-            ei = ExpectedImprovement(model=single_model, best_f=best_train_Y)
-            candidates, _ = optimize_acqf(
-                acq_function=ei,
-                bounds=bounds,
-                q=1,
-                num_restarts=20,
-                raw_samples=512,
-                options={"batch_limit": 5, "maxiter": 200}
-            )
-            candidates_list = [candidates]
-            args.acquisition = ['EI']
-
-        if len(gains) == 0:
-            chosen_acq_index = np.random.choice(len(candidates_list))
-        else:
-            eta = 0.1
-            logits = np.array(gains[:len(candidates_list)])
-            logits -= np.max(logits)
-            exp_logits = np.exp(eta * logits)
-            probs = exp_logits / np.sum(exp_logits)
-            chosen_acq_index = np.random.choice(len(candidates_list), p=probs)
-
-        new_candidates = candidates_list[chosen_acq_index]
-        new_Y = function(new_candidates).unsqueeze(-1)
+        new_candidates, chosen_acq_index, single_model = get_next_points(
+            objective, train_X, train_Y, best_train_Y, bounds, args.acquisition, args.kernel, 1, gains
+        )
+        new_Y = objective(new_candidates).unsqueeze(-1)
 
         train_X = torch.cat([train_X, new_candidates])
         train_Y = torch.cat([train_Y, new_Y])
@@ -139,6 +144,7 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoTorch Bayesian Optimization')
+    # parser.add_argument('--iterations', type=int, default=100, help='Number of iterations')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--acquisition', nargs='+', default=['LogEI', 'LogPI', 'UCB'], 
                         choices=['EI', 'UCB', 'PI', 'LogEI', 'PM', 'LogPI'],
@@ -161,3 +167,4 @@ if __name__ == "__main__":
     np.save(f"portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
 
     print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy")
+

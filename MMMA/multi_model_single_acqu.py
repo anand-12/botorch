@@ -193,5 +193,6 @@ if __name__ == "__main__":
     all_results = run_experiments(args)
     
     kernel_str = "_".join(args.kernels)
+    all_results_np = np.array(all_results, dtype=object)
     np.save(f"{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")
