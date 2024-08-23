@@ -2,7 +2,8 @@ import argparse
 import botorch
 import gpytorch
 import torch
-import numpy as np, os
+import numpy as np
+import os
 import time
 import warnings
 import random
@@ -17,6 +18,7 @@ from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
 from botorch.models.ensemble import EnsembleModel
 from botorch.posteriors.ensemble import EnsemblePosterior
+from botorch.utils.transforms import normalize, unnormalize, standardize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
@@ -104,7 +106,6 @@ def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
 def bayesian_optimization(args):
-    # n_iterations = 20 * args.dim
     n_iterations = 100
     initial_points = int(0.1 * n_iterations)
     function, bounds = setup_test_function(args.function, args.dim)
@@ -131,14 +132,21 @@ def bayesian_optimization(args):
     for t in range(n_iterations):
         print(f"Running iteration {t+1}/{n_iterations}, Best value = {best_observed_value:.4f}")
 
-        models = [fit_model(train_x, train_y, kernel)[0] for kernel in args.kernels]
+        # Compute bounds for normalization
+        fit_bounds = torch.stack([torch.min(train_x, 0)[0], torch.max(train_x, 0)[0]])
+        
+        # Normalize inputs and standardize outputs
+        train_x_normalized = normalize(train_x, bounds=fit_bounds)
+        train_y_standardized = standardize(train_y)
+
+        models = [fit_model(train_x_normalized, train_y_standardized, kernel)[0] for kernel in args.kernels]
         mlls = [ExactMarginalLogLikelihood(model.likelihood, model).to(device=device, dtype=torch.float64) for model in models]
 
         if args.true_ensemble:
             if args.weight_type == 'uniform':
                 weights = None
             elif args.weight_type == 'likelihood':
-                weights = torch.tensor(calculate_weights(models, mlls, train_x, train_y), dtype=torch.float64, device=device)
+                weights = torch.tensor(calculate_weights(models, mlls, train_x_normalized, train_y_standardized), dtype=torch.float64, device=device)
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = MyEnsembleModel(models, weights)
@@ -146,18 +154,21 @@ def bayesian_optimization(args):
             if args.weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
             elif args.weight_type == 'likelihood':
-                weights = calculate_weights(models, mlls, train_x, train_y)
+                weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
                 selected_model_index = select_model(weights)
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = models[selected_model_index]
         
+        # Standardize best observed value
+        best_f = (best_observed_value - train_y.mean()) / train_y.std()
+
         acquisition = {
-            'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
-            'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
-            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_observed_value),
+            'LogEI': LogExpectedImprovement(model=model, best_f=best_f),
+            'EI': ExpectedImprovement(model=model, best_f=best_f),
+            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_f),
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
-            'PI': ProbabilityOfImprovement(model=model, best_f=best_observed_value)
+            'PI': ProbabilityOfImprovement(model=model, best_f=best_f)
         }
         
         candidates_list = []
@@ -166,7 +177,7 @@ def bayesian_optimization(args):
             try:
                 candidates, _ = optimize_acqf(
                     acq_function=acq_function, 
-                    bounds=bounds, 
+                    bounds=normalize(bounds, fit_bounds), 
                     q=1, 
                     num_restarts=2, 
                     raw_samples=20,
@@ -175,10 +186,11 @@ def bayesian_optimization(args):
             except RuntimeError as e:
                 print(f"Optimization failed: {e}")
                 discrete_candidates = torch.rand(1000, bounds.size(1), dtype=torch.float64, device=device) * (bounds[1] - bounds[0]) + bounds[0]
+                discrete_candidates_normalized = normalize(discrete_candidates, bounds=fit_bounds)
                 candidates, _ = optimize_acqf_discrete(
                     acq_function=acq_function,
                     q=1,
-                    choices=discrete_candidates,
+                    choices=discrete_candidates_normalized,
                 )
             candidates_list.append(candidates)
 
@@ -191,7 +203,8 @@ def bayesian_optimization(args):
         chosen_acq_functions.append(chosen_acq_index)
         selected_models.append(selected_model_index if not args.true_ensemble else None)
         
-        new_candidates = candidates_list[chosen_acq_index]
+        new_candidates_normalized = candidates_list[chosen_acq_index]
+        new_candidates = unnormalize(new_candidates_normalized, bounds=fit_bounds)
         new_y = function(new_candidates).unsqueeze(-1)
         train_x = torch.cat([train_x, new_candidates])
         train_y = torch.cat([train_y, new_y])
@@ -203,19 +216,17 @@ def bayesian_optimization(args):
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
                 
         if args.true_ensemble:
-            posterior = model.posterior(new_candidates)
+            posterior = model.posterior(new_candidates_normalized)
             posterior_mean = posterior.mean.mean(dim=0) 
         else:
-            posterior_mean = model.posterior(new_candidates).mean
+            posterior_mean = model.posterior(new_candidates_normalized).mean
 
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
 
-
     return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
 
 def run_experiments(args):
-
     all_results = []
     for seed in range(args.seed, args.seed + args.experiments):
         print(f"\nRunning experiment with seed {seed}")

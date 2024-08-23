@@ -15,9 +15,15 @@ from botorch.acquisition.analytic import LogProbabilityOfImprovement
 from botorch.optim import optimize_acqf
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
-from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
+from gpytorch.kernels import MaternKernel, RBFKernel, ScaleKernel, RFFKernel
 from botorch.acquisition.analytic import PosteriorMean
-import warnings, random, os, time, gpytorch
+from botorch.utils.transforms import normalize, unnormalize, standardize
+import warnings
+import random
+import os
+import time
+import gpytorch
+
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,7 +32,7 @@ dtype = torch.float64
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None):
+def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None):
     base_kernel = {
         'Matern52': MaternKernel(nu=2.5, ard_num_dims=train_X.shape[-1]),
         'RBF': RBFKernel(ard_num_dims=train_X.shape[-1]),
@@ -89,14 +95,15 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
     return candidates_list[chosen_acq_index], chosen_acq_index, single_model
 
 def bayesian_optimization(args):
-    # num_iterations = 20 * args.dim
     num_iterations = 100
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
     
+    # Draw initial points
     train_X = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
     train_Y = objective(train_X).unsqueeze(-1)
+
     best_init_y = train_Y.max().item()
     best_train_Y = best_init_y
     
@@ -111,13 +118,30 @@ def bayesian_optimization(args):
 
     for i in range(num_iterations):
         print(f"Running iteration {i+1}/{num_iterations}, Best value = {best_train_Y:.4f}")
-        new_candidates, chosen_acq_index, single_model = get_next_points(
-            objective, train_X, train_Y, best_train_Y, bounds, args.acquisition, args.kernel, 1, gains
+        
+        # Compute bounds for normalization
+        fit_bounds = torch.stack([torch.min(train_X, 0)[0], torch.max(train_X, 0)[0]])
+        
+        # Normalize inputs and standardize outputs
+        train_X_normalized = normalize(train_X, bounds=fit_bounds)
+        train_Y_standardized = standardize(train_Y)
+
+        # Standardize best observed value
+        best_f = (best_train_Y - train_Y.mean()) / train_Y.std()
+
+        new_candidates_normalized, chosen_acq_index, model = get_next_points(
+            train_X_normalized, train_Y_standardized, 
+            best_f, normalize(bounds, fit_bounds),
+            args.acquisition, args.kernel, 1, gains
         )
+        
+        # Unnormalize the candidates
+        new_candidates = unnormalize(new_candidates_normalized, bounds=fit_bounds)
         new_Y = objective(new_candidates).unsqueeze(-1)
 
         train_X = torch.cat([train_X, new_candidates])
         train_Y = torch.cat([train_Y, new_Y])
+
         best_train_Y = train_Y.max().item()
         
         max_values.append(best_train_Y)
@@ -126,7 +150,7 @@ def bayesian_optimization(args):
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
         chosen_acq_functions.append(chosen_acq_index)
 
-        posterior_mean = single_model.posterior(new_candidates).mean
+        posterior_mean = model.posterior(new_candidates_normalized).mean
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
 
@@ -153,7 +177,6 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoTorch Bayesian Optimization')
-    # parser.add_argument('--iterations', type=int, default=100, help='Number of iterations')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--acquisition', nargs='+', default=['LogEI', 'LogPI', 'UCB'], 
                         choices=['EI', 'UCB', 'PI', 'LogEI', 'PM', 'LogPI'],
@@ -177,4 +200,3 @@ if __name__ == "__main__":
     np.save(f"./{args.function}/portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
 
     print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy")
-

@@ -4,15 +4,18 @@ import numpy as np
 from botorch.models import SingleTaskGP
 from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition import ExpectedImprovement, LogExpectedImprovement, ProbabilityOfImprovement, UpperConfidenceBound
-from botorch.acquisition.analytic import PosteriorMean
+from botorch.acquisition.analytic import PosteriorMean, LogProbabilityOfImprovement
 from botorch.optim import optimize_acqf
 from gpytorch.mlls import ExactMarginalLogLikelihood
-from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
+from gpytorch.kernels import MaternKernel, RBFKernel, ScaleKernel, RFFKernel
 from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
-import warnings, random, os
-from botorch.acquisition.analytic import LogProbabilityOfImprovement
-import time, gpytorch
+from botorch.utils.transforms import normalize, unnormalize, standardize
+import warnings
+import random
+import os
+import time
+import gpytorch
 
 warnings.filterwarnings("ignore")
 
@@ -32,7 +35,6 @@ def get_kernel(kernel_name, dim):
     return ScaleKernel(base_kernels[kernel_name])
 
 def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_func_name, dim):
-
     objective, bounds = setup_test_function(test_func_name, dim)
     bounds = bounds.to(dtype=dtype, device=device)
     f_star = true_maxima[test_func_name]
@@ -49,21 +51,41 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
     cumulative_regrets = [f_star - best_observed_value]
     
     for iteration in range(n_iterations):
-        model = SingleTaskGP(train_X, train_Y, covar_module=get_kernel(kernel_name, dim))
+        # Compute bounds for normalization
+        fit_bounds = torch.stack([torch.min(train_X, 0)[0], torch.max(train_X, 0)[0]])
+        
+        # Normalize inputs and standardize outputs
+        train_X_normalized = normalize(train_X, bounds=fit_bounds)
+        train_Y_standardized = standardize(train_Y)
+
+        model = SingleTaskGP(train_X_normalized, train_Y_standardized, covar_module=get_kernel(kernel_name, dim))
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         with gpytorch.settings.cholesky_jitter(1e-1):
             fit_gpytorch_mll(mll)
         
+        # Standardize best observed value
+        best_f = (best_observed_value - train_Y.mean()) / train_Y.std()
+
         acq_func = {
-            'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
-            'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
-            'PI': ProbabilityOfImprovement(model=model, best_f=best_observed_value),
-            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_observed_value),
+            'EI': ExpectedImprovement(model=model, best_f=best_f),
+            'LogEI': LogExpectedImprovement(model=model, best_f=best_f),
+            'PI': ProbabilityOfImprovement(model=model, best_f=best_f),
+            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_f),
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PM': PosteriorMean(model=model)
         }[acq_func_name]
         
-        new_x, _ = optimize_acqf(acq_function=acq_func, bounds=bounds, q=1, num_restarts=2, raw_samples=20)
+        # Optimize acquisition function in normalized space
+        new_x_normalized, _ = optimize_acqf(
+            acq_function=acq_func, 
+            bounds=normalize(bounds, fit_bounds),
+            q=1, 
+            num_restarts=2, 
+            raw_samples=50
+        )
+        
+        # Unnormalize new_x before evaluating objective
+        new_x = unnormalize(new_x_normalized, bounds=fit_bounds)
         new_y = objective(new_x).unsqueeze(-1)
         
         train_X = torch.cat([train_X, new_x])
@@ -82,7 +104,6 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
 
 def run_experiments(args):
     all_results = []
-    # n_iterations = 20 * args.dim
     n_iterations = 100
     for seed in range(args.seed, args.seed+args.experiments):
         torch.manual_seed(seed)
@@ -101,13 +122,12 @@ def run_experiments(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='BoTorch Bayesian Optimization on various test functions')
-    # parser.add_argument('--iterations', type=int, default=50, help='Number of optimization iterations')
     parser.add_argument('--experiments', type=int, default=1, help='Number of experiments to run')
     parser.add_argument('--seed', type=int, default=42, help='Base random seed')
     parser.add_argument('--acquisition', type=str, default='LogEI', choices=['EI', 'LogEI', 'PI', 'LogPI', 'UCB', 'PM'], 
                         help='Acquisition function (EI: Expected Improvement, LogEI: Log Expected Improvement, PI: Probability of Improvement, LogPI, UCB: Upper Confidence Bound, PM: Posterior Mean)')
     parser.add_argument('--kernel', type=str, default='Matern52', choices=['Matern52', 'Matern32', 'RBF', 'RFF'], 
-                        help='GP kernel (matern: Matérn kernel, rbf: Radial Basis Function kernel, rff: Random Fourier Features kernel)')
+                        help='GP kernel (Matern52: Matérn 5/2 kernel, Matern32: Matérn 3/2 kernel, RBF: Radial Basis Function kernel, RFF: Random Fourier Features kernel)')
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimension for functions that support variable dimensions')

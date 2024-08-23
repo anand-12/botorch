@@ -8,12 +8,11 @@ from botorch.acquisition import ExpectedImprovement, ProbabilityOfImprovement, U
 from botorch.optim import optimize_acqf
 from botorch.utils.sampling import draw_sobol_samples
 from botorch_test_functions import setup_test_function, true_maxima
-import warnings, os
-from botorch.acquisition.analytic import PosteriorMean
+from botorch.acquisition.analytic import PosteriorMean, LogProbabilityOfImprovement
 from botorch.models.ensemble import EnsembleModel
 from botorch.posteriors.ensemble import EnsemblePosterior
-from botorch.acquisition.analytic import LogProbabilityOfImprovement
-import random, time
+from botorch.utils.transforms import normalize, unnormalize, standardize
+import warnings, os, random, time
 
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -79,7 +78,6 @@ def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
 def bayesian_optimization(args):
-    # n_iterations = 20 * args.dim
     n_iterations = 100
     initial_points = int(0.1 * n_iterations)
     function, bounds = setup_test_function(args.function, args.dim)
@@ -105,10 +103,18 @@ def bayesian_optimization(args):
 
     for i in range(n_iterations):
         print(f"Running iteration {i+1}/{n_iterations}, Best value = {best_observed_value:.4f}")
+        
+        # Compute bounds for normalization
+        fit_bounds = torch.stack([torch.min(train_x, 0)[0], torch.max(train_x, 0)[0]])
+        
+        # Normalize inputs and standardize outputs
+        train_x_normalized = normalize(train_x, bounds=fit_bounds)
+        train_y_standardized = standardize(train_y)
+
         models = []
         mlls = []
         for kernel in args.kernels:
-            model, mll = fit_model(train_x, train_y, kernel_map[kernel])
+            model, mll = fit_model(train_x_normalized, train_y_standardized, kernel_map[kernel])
             models.append(model)
             mlls.append(mll)
 
@@ -116,7 +122,7 @@ def bayesian_optimization(args):
             if args.weight_type == 'uniform':
                 weights = None
             elif args.weight_type == 'likelihood':
-                weights = torch.tensor(calculate_weights(models, mlls, train_x, train_y), dtype=torch.float64, device=device)
+                weights = torch.tensor(calculate_weights(models, mlls, train_x_normalized, train_y_standardized), dtype=torch.float64, device=device)
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = MyEnsembleModel(models, weights)
@@ -124,31 +130,37 @@ def bayesian_optimization(args):
             if args.weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
             elif args.weight_type == 'likelihood':
-                weights = calculate_weights(models, mlls, train_x, train_y)
+                weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
                 selected_model_index = select_model(weights)
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = models[selected_model_index]
 
+        # Standardize best observed value
+        best_f = (best_observed_value - train_y.mean()) / train_y.std()
+
         acq_function_map = {
-            'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
-            'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
-            'PI': ProbabilityOfImprovement(model=model, best_f=best_observed_value),
-            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_observed_value),
+            'EI': ExpectedImprovement(model=model, best_f=best_f),
+            'LogEI': LogExpectedImprovement(model=model, best_f=best_f),
+            'PI': ProbabilityOfImprovement(model=model, best_f=best_f),
+            'LogPI': LogProbabilityOfImprovement(model=model, best_f=best_f),
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PM': PosteriorMean(model=model)
         }
         acq_function = acq_function_map[args.acquisition]
 
-        new_x, _ = optimize_acqf(
+        new_x_normalized, _ = optimize_acqf(
             acq_function=acq_function,
-            bounds=bounds,
+            bounds=normalize(bounds, fit_bounds),
             q=1,
             num_restarts=2,
             raw_samples=20,
         )
 
+        # Unnormalize new_x before evaluating objective
+        new_x = unnormalize(new_x_normalized, bounds=fit_bounds)
         new_y = function(new_x).unsqueeze(-1)
+
         train_x = torch.cat([train_x, new_x])
         train_y = torch.cat([train_y, new_y])
         best_observed_value = train_y.max().item()
@@ -161,7 +173,6 @@ def bayesian_optimization(args):
     return max_values, gap_metrics, simple_regrets, cumulative_regrets
 
 def run_experiments(args):
-
     all_results = []
     for seed in range(args.seed, args.seed + args.experiments):
         np.random.seed(seed)
