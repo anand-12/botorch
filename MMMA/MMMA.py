@@ -104,7 +104,8 @@ def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
 def bayesian_optimization(args):
-    n_iterations = 30 * args.dim
+    # n_iterations = 20 * args.dim
+    n_iterations = 100
     initial_points = int(0.1 * n_iterations)
     function, bounds = setup_test_function(args.function, args.dim)
     bounds = bounds.to(dtype=torch.float64, device=device)
@@ -150,7 +151,7 @@ def bayesian_optimization(args):
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = models[selected_model_index]
-
+        
         acquisition = {
             'LogEI': LogExpectedImprovement(model=model, best_f=best_observed_value),
             'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
@@ -167,8 +168,8 @@ def bayesian_optimization(args):
                     acq_function=acq_function, 
                     bounds=bounds, 
                     q=1, 
-                    num_restarts=10, 
-                    raw_samples=32,
+                    num_restarts=2, 
+                    raw_samples=20,
                     options={"batch_limit": 5, "maxiter": 200}
                 )
             except RuntimeError as e:
@@ -225,6 +226,7 @@ def run_experiments(args):
         best_observed_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
         end = time.time()
         experiment_time = end - start
+        print(f"Experiment time for MMMA: {experiment_time:.2f} seconds")
         all_results.append([best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
 
     return all_results

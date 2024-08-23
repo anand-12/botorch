@@ -52,7 +52,8 @@ def fit_model(train_x, train_y, kernel):
     covar_module = gpytorch.kernels.ScaleKernel(kernel(ard_num_dims=train_x.shape[-1])).to(device)
     model = SingleTaskGP(train_x, train_y, covar_module=covar_module).to(device)
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
-    fit_gpytorch_mll(mll)
+    with gpytorch.settings.cholesky_jitter(1e-1):  
+        fit_gpytorch_mll(mll)
     return model, mll
 
 def calculate_weights(models, mlls, train_x, train_y):
@@ -78,7 +79,8 @@ def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
 def bayesian_optimization(args):
-    n_iterations = 30 * args.dim
+    # n_iterations = 20 * args.dim
+    n_iterations = 100
     initial_points = int(0.1 * n_iterations)
     function, bounds = setup_test_function(args.function, args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
@@ -142,8 +144,8 @@ def bayesian_optimization(args):
             acq_function=acq_function,
             bounds=bounds,
             q=1,
-            num_restarts=10,
-            raw_samples=512,
+            num_restarts=2,
+            raw_samples=20,
         )
 
         new_y = function(new_x).unsqueeze(-1)
@@ -171,6 +173,7 @@ def run_experiments(args):
         end = time.time()
         experiment_time = end - start
         all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
+        print(f"Experiment time for multimodel single acquisition: {experiment_time:.2f} seconds")
     return all_results
 
 if __name__ == "__main__":

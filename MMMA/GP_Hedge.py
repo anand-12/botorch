@@ -17,7 +17,7 @@ from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
 from gpytorch.kernels import MaternKernel, RBFKernel, LinearKernel, PolynomialKernel, ScaleKernel, RFFKernel
 from botorch.acquisition.analytic import PosteriorMean
-import warnings, random, os, time
+import warnings, random, os, time, gpytorch
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +36,8 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
     
     single_model = SingleTaskGP(train_X, train_Y, covar_module=ScaleKernel(base_kernel))
     mll = ExactMarginalLogLikelihood(single_model.likelihood, single_model)
-    fit_gpytorch_mll(mll)
+    with gpytorch.settings.cholesky_jitter(1e-1):
+        fit_gpytorch_mll(mll)
 
     acq_function_map = {
         'EI': ExpectedImprovement(model=single_model, best_f=best_train_Y),
@@ -55,8 +56,8 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
                 acq_function=acq_function,
                 bounds=bounds,
                 q=n_points,
-                num_restarts=20,
-                raw_samples=512,
+                num_restarts=2,
+                raw_samples=20,
                 options={"batch_limit": 5, "maxiter": 200}
             )
             candidates_list.append(candidates)
@@ -68,8 +69,8 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
             acq_function=ei,
             bounds=bounds,
             q=n_points,
-            num_restarts=20,
-            raw_samples=512,
+            num_restarts=2,
+            raw_samples=20,
             options={"batch_limit": 5, "maxiter": 200}
         )
         candidates_list = [candidates]
@@ -88,7 +89,8 @@ def get_next_points(objective, train_X, train_Y, best_train_Y, bounds, acq_funct
     return candidates_list[chosen_acq_index], chosen_acq_index, single_model
 
 def bayesian_optimization(args):
-    num_iterations = 30 * args.dim
+    # num_iterations = 20 * args.dim
+    num_iterations = 100
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
@@ -145,7 +147,7 @@ def run_experiments(args):
         experiment_time = end_time - start_time
         all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
         
-        print(f"Experiment {seed} completed in {experiment_time:.2f} seconds")
+        print(f"Experiment {seed} for portfolio completed in {experiment_time:.2f} seconds")
 
     return all_results
 

@@ -12,7 +12,7 @@ from botorch_test_functions import setup_test_function, true_maxima
 from botorch.utils.sampling import draw_sobol_samples
 import warnings, random, os
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
-import time
+import time, gpytorch
 
 warnings.filterwarnings("ignore")
 
@@ -51,7 +51,8 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
     for iteration in range(n_iterations):
         model = SingleTaskGP(train_X, train_Y, covar_module=get_kernel(kernel_name, dim))
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
-        fit_gpytorch_mll(mll)
+        with gpytorch.settings.cholesky_jitter(1e-1):
+            fit_gpytorch_mll(mll)
         
         acq_func = {
             'EI': ExpectedImprovement(model=model, best_f=best_observed_value),
@@ -62,7 +63,7 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
             'PM': PosteriorMean(model=model)
         }[acq_func_name]
         
-        new_x, _ = optimize_acqf(acq_function=acq_func, bounds=bounds, q=1, num_restarts=10, raw_samples=512)
+        new_x, _ = optimize_acqf(acq_function=acq_func, bounds=bounds, q=1, num_restarts=2, raw_samples=20)
         new_y = objective(new_x).unsqueeze(-1)
         
         train_X = torch.cat([train_X, new_x])
@@ -81,7 +82,8 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
 
 def run_experiments(args):
     all_results = []
-    n_iterations = 30 * args.dim
+    # n_iterations = 20 * args.dim
+    n_iterations = 100
     for seed in range(args.seed, args.seed+args.experiments):
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -94,7 +96,7 @@ def run_experiments(args):
         experiment_time = end_time - start_time
         all_results.append([best_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
         print(f"Best value: {best_values[-1]:.4f}")
-        # print(f"Experiment time: {experiment_time:.2f} seconds")
+        print(f"Experiment time for baseline: {experiment_time:.2f} seconds")
     return all_results
 
 if __name__ == "__main__":
