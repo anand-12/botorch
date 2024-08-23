@@ -156,7 +156,7 @@ def bayesian_optimization(args):
         max_values.append(best_observed_value)
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
-        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - new_y.item()))
+        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
     
     return max_values, gap_metrics, simple_regrets, cumulative_regrets
 

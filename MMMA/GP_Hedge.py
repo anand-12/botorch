@@ -123,7 +123,7 @@ def bayesian_optimization(args):
         max_values.append(best_train_Y)
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
-        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - new_Y.item()))
+        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
         chosen_acq_functions.append(chosen_acq_index)
 
         posterior_mean = single_model.posterior(new_candidates).mean

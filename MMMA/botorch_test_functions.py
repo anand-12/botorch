@@ -33,11 +33,11 @@ def setup_test_function(func_name, dim=2):
         "Cosine8": (Cosine8(), torch.tensor([[-1] * 8, [1] * 8])),
         "DropWave": (DropWave(negate=True), torch.tensor([[-5.12, -5.12], [5.12, 5.12]])),
         "DixonPrice": (DixonPrice(dim=dim, negate=True), torch.tensor([[-10] * dim, [10] * dim])),
-        "EggHolder": (EggHolder(negate=True), torch.tensor([[-512, -512], [512, 512]])), #CHECKED TILL HERE, CHECK BELOW FOR NEGATE
-        "Griewank": (Griewank(dim=dim), torch.tensor([[-600] * dim, [600] * dim])),
+        "EggHolder": (EggHolder(negate=True), torch.tensor([[-512, -512], [512, 512]])), 
+        "Griewank": (Griewank(dim=dim, negate=True), torch.tensor([[-600] * dim, [600] * dim])),
         "Hartmann": (Hartmann(dim=6, negate=True), torch.tensor([[0] * 6, [1] * 6])),
         "HolderTable": (HolderTable(negate=True), torch.tensor([[-10, -10], [10, 10]])),
-        "Levy": (Levy(dim=dim, negate=True), torch.tensor([[-10] * dim, [10] * dim])),
+        "Levy": (Levy(dim=dim, negate=True), torch.tensor([[-10] * dim, [10] * dim])), #CHECKED TILL HERE, CHECK BELOW FOR NEGATE
         "Michalewicz": (Michalewicz(dim=dim), torch.tensor([[0] * dim, [np.pi] * dim])),
         "Powell": (Powell(dim=dim), torch.tensor([[-4] * dim, [5] * dim])),
         "Rastrigin": (Rastrigin(dim=dim, negate=True), torch.tensor([[-5.12] * dim, [5.12] * dim])),

@@ -200,7 +200,7 @@ def bayesian_optimization(args):
         best_observed_values.append(best_observed_value)
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
-        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - new_y.item()))
+        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
                 
         if args.true_ensemble:
             posterior = model.posterior(new_candidates)
