@@ -32,7 +32,7 @@ dtype = torch.float64
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None):
+def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None, acq_weight='bandit'):
     base_kernel = {
         'Matern52': MaternKernel(nu=2.5, ard_num_dims=train_X.shape[-1]),
         'RBF': RBFKernel(ard_num_dims=train_X.shape[-1]),
@@ -82,9 +82,9 @@ def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kerne
         candidates_list = [candidates]
         acq_functions = ['EI']
 
-    if gains is None or len(gains) == 0:
+    if acq_weight == 'random' or gains is None or len(gains) == 0:
         chosen_acq_index = np.random.choice(len(candidates_list))
-    else:
+    else:  # bandit
         eta = 0.1
         logits = np.array(gains[:len(candidates_list)])
         logits -= np.max(logits)
@@ -132,7 +132,7 @@ def bayesian_optimization(args):
         new_candidates_normalized, chosen_acq_index, model = get_next_points(
             train_X_normalized, train_Y_standardized, 
             best_f, normalize(bounds, fit_bounds),
-            args.acquisition, args.kernel, 1, gains
+            args.acquisition, args.kernel, 1, gains, args.acq_weight
         )
         
         # Unnormalize the candidates
@@ -188,15 +188,15 @@ if __name__ == "__main__":
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
-
+    parser.add_argument('--acq_weight', type=str, default='bandit', choices=['random', 'bandit'],
+                        help='Method for selecting acquisition function: random or bandit')
     args = parser.parse_args()
     acquisition_str = "_".join(args.acquisition)
-
     all_results = run_experiments(args)
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy", all_results_np)
+    np.save(f"./{args.function}/portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_acq_weight_{args.acq_weight}_optimization_results.npy", all_results_np)
 
-    print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_optimization_results.npy")
+    print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_acq_weight_{args.acq_weight}_optimization_results.npy")

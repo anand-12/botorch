@@ -38,14 +38,14 @@ def setup_test_function(func_name, dim=2):
         "Hartmann": (Hartmann(dim=6, negate=True), torch.tensor([[0] * 6, [1] * 6])),
         "HolderTable": (HolderTable(negate=True), torch.tensor([[-10, -10], [10, 10]])),
         "Levy": (Levy(dim=dim, negate=True), torch.tensor([[-10] * dim, [10] * dim])), #CHECKED TILL HERE, CHECK BELOW FOR NEGATE
-        "Michalewicz": (Michalewicz(dim=dim), torch.tensor([[0] * dim, [np.pi] * dim])),
-        "Powell": (Powell(dim=dim), torch.tensor([[-4] * dim, [5] * dim])),
+        "Michalewicz": (Michalewicz(dim=dim, negate=True), torch.tensor([[0] * dim, [np.pi] * dim])),
+        "Powell": (Powell(dim=dim, negate=True), torch.tensor([[-4] * dim, [5] * dim])),
         "Rastrigin": (Rastrigin(dim=dim, negate=True), torch.tensor([[-5.12] * dim, [5.12] * dim])),
-        "Rosenbrock": (Rosenbrock(dim=dim), torch.tensor([[-5] * dim, [10] * dim])),
+        "Rosenbrock": (Rosenbrock(dim=dim, negate=True), torch.tensor([[-5] * dim, [10] * dim])),
         "Shekel": (Shekel(negate=True), torch.tensor([[0] * dim, [10] * dim])),
         "SixHumpCamel": (SixHumpCamel(negate=True), torch.tensor([[-3, -2], [3, 2]])),
         "StyblinskiTang": (StyblinskiTang(dim=dim), torch.tensor([[-5] * dim, [5] * dim])),
-        "ThreeHumpCamel": (ThreeHumpCamel(), torch.tensor([[-5, -5], [5, 5]]))
+        "ThreeHumpCamel": (ThreeHumpCamel(negate=True), torch.tensor([[-5, -5], [5, 5]]))
     }
 
     if func_name not in function_configs:

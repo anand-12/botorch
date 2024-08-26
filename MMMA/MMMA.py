@@ -143,21 +143,21 @@ def bayesian_optimization(args):
         mlls = [ExactMarginalLogLikelihood(model.likelihood, model).to(device=device, dtype=torch.float64) for model in models]
 
         if args.true_ensemble:
-            if args.weight_type == 'uniform':
+            if args.kernel_weight_type == 'uniform':
                 weights = None
-            elif args.weight_type == 'likelihood':
+            elif args.kernel_weight_type == 'likelihood':
                 weights = torch.tensor(calculate_weights(models, mlls, train_x_normalized, train_y_standardized), dtype=torch.float64, device=device)
             else:
-                raise ValueError(f"Unknown weight type: {args.weight_type}")
+                raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
             model = MyEnsembleModel(models, weights)
         else:
-            if args.weight_type == 'uniform':
+            if args.kernel_weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
-            elif args.weight_type == 'likelihood':
+            elif args.kernel_weight_type == 'likelihood':
                 weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
                 selected_model_index = select_model(weights)
             else:
-                raise ValueError(f"Unknown weight type: {args.weight_type}")
+                raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
             model = models[selected_model_index]
         
         # Standardize best observed value
@@ -194,11 +194,14 @@ def bayesian_optimization(args):
                 )
             candidates_list.append(candidates)
 
-        logits = gains if len(gains) > 0 else np.ones(len(args.acquisition), dtype=np.float64)
-        logits -= np.max(logits)
-        exp_logits = np.exp(eta * logits)
-        probs = exp_logits / np.sum(exp_logits)
-        chosen_acq_index = np.random.choice(len(args.acquisition), p=probs)
+        if args.acq_weight == 'random':
+            chosen_acq_index = np.random.choice(len(args.acquisition))
+        else:  # bandit
+            logits = gains if len(gains) > 0 else np.ones(len(args.acquisition), dtype=np.float64)
+            logits -= np.max(logits)
+            exp_logits = np.exp(eta * logits)
+            probs = exp_logits / np.sum(exp_logits)
+            chosen_acq_index = np.random.choice(len(args.acquisition), p=probs)
         
         chosen_acq_functions.append(chosen_acq_index)
         selected_models.append(selected_model_index if not args.true_ensemble else None)
@@ -251,17 +254,18 @@ if __name__ == "__main__":
     parser.add_argument("--function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
     parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
-    parser.add_argument("--weight_type", type=str, default="uniform", choices=["uniform", "likelihood"], help="Type of weights to use for model selection or ensemble")
+    parser.add_argument("--kernel_weight_type", type=str, default="uniform", choices=["uniform", "likelihood"], help="Type of weights to use for model selection or ensemble")
+    parser.add_argument("--acq_weight", type=str, default="bandit", choices=["random", "bandit"], help="Method for selecting acquisition function: random or bandit")
 
     args = parser.parse_args()
 
-    if args.weight_type not in ["uniform", "likelihood"]:
-        parser.error("--weight_type must be specified as either 'uniform' or 'likelihood'")
+    if args.kernel_weight_type not in ["uniform", "likelihood"]:
+        parser.error("--kernel_weight_type must be specified as either 'uniform' or 'likelihood'")
 
     all_results = run_experiments(args)
     
     kernel_str = "_".join(args.kernels)
     acq_str = "_".join(args.acquisition)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/{'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.weight_type}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy")
+    np.save(f"./{args.function}/{'True' if args.true_ensemble else 'False'}_{args.kernel_weight_type}_{args.acq_weight}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.kernel_weight_type}_{args.acq_weight}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy")
