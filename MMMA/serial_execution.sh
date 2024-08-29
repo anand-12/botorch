@@ -11,17 +11,8 @@ run_and_print() {
 }
 
 # Run each script and print the output
-run_and_print MMMA.py --experiments 25 --seed 0 --function SixHumpCamel --dim 2 --kernels Matern52 Matern32 RBF --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function ThreeHumpCamel --dim 2 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 100 --function Hartmann --dim 6 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Shekel --dim 4 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Rosenbrock --dim 2 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Ackley --dim 4 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Rastrigin --dim 3 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Michalewicz --dim 2 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Griewank --dim 5 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Cosine8 --dim 8 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function HolderTable --dim 2 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
-run_and_print MMMA.py --experiments 25 --seed 0 --function Levy --dim 3 --kernels Matern52 Matern32 RBF  --acquisition LogEI LogPI UCB --acq_weight random --kernel_weight_type uniform
+
+run_and_print PI_is_back.py --seed 0 --kernel Matern52 --experiments 10 --switch_percentage 25 --function ThreeHumpCamel --dim 4 
+
 
 echo "Execution complete."

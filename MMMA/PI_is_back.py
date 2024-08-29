@@ -56,7 +56,7 @@ def run_experiment(args):
     bounds = bounds.to(dtype=dtype, device=device)
     
     train_X = draw_sobol_samples(bounds=bounds, n=10, q=1).squeeze(1)
-    train_Y = -objective(train_X).unsqueeze(-1)
+    train_Y = objective(train_X).unsqueeze(-1)
     best_init_y = train_Y.max().item()
     best_train_Y = best_init_y
     
@@ -73,7 +73,7 @@ def run_experiment(args):
         new_candidates, acq_name, single_model = get_next_points(
             train_X, train_Y, best_train_Y, bounds, args.kernel, i, args.iterations, args.switch_percentage
         )
-        new_Y = -objective(new_candidates).unsqueeze(-1)
+        new_Y = objective(new_candidates).unsqueeze(-1)
 
         train_X = torch.cat([train_X, new_candidates])
         train_Y = torch.cat([train_Y, new_Y])
@@ -82,7 +82,7 @@ def run_experiment(args):
         max_values.append(best_train_Y)
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
-        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - new_Y.item()))
+        cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
         chosen_acq_functions.append(acq_name)
 
     return max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions
@@ -149,6 +149,6 @@ if __name__ == "__main__":
 
     print(f"Results saved to logEI_logPI_switch_{args.function}_optimization_results.npy")
 
-    all_best_observed = [result[0] for result in all_results]
-    all_chosen_acq = [result[4] for result in all_results]
-    plot_results(all_best_observed, all_chosen_acq, args)
+    # all_best_observed = [result[0] for result in all_results]
+    # all_chosen_acq = [result[4] for result in all_results]
+    # plot_results(all_best_observed, all_chosen_acq, args)

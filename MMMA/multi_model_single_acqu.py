@@ -59,7 +59,7 @@ def calculate_weights(models, mlls, train_x, train_y):
     log_likelihoods = []
     for model, mll in zip(models, mlls):
         if model is not None and mll is not None:
-            with gpytorch.settings.cholesky_jitter(1e-2):
+            with gpytorch.settings.cholesky_jitter(1e-1):
                 ll = mll(model(train_x), train_y).sum().item()
                 log_likelihoods.append(ll)
         else:
