@@ -76,10 +76,10 @@ def fit_model(train_x, train_y, kernel_type):
 
     model = CustomGP(train_x, train_y).to(device=device, dtype=torch.float64)
     mll = ExactMarginalLogLikelihood(model.likelihood, model).to(device=device, dtype=torch.float64)
-    
+
     with gpytorch.settings.cholesky_jitter(1e-1):  
         fit_gpytorch_mll(mll)
-    
+
     return model, mll
 
 def calculate_weights(models, mlls, train_x, train_y):
@@ -91,7 +91,7 @@ def calculate_weights(models, mlls, train_x, train_y):
                 log_likelihoods.append(ll)    
         else:
             log_likelihoods.append(float('-inf'))
-    
+
     log_likelihoods = np.array(log_likelihoods, dtype=np.float64)
     max_log_likelihood = np.max(log_likelihoods)
     log_likelihoods -= max_log_likelihood  
@@ -111,12 +111,12 @@ def bayesian_optimization(args):
     function, bounds = setup_test_function(args.function, args.dim)
     bounds = bounds.to(dtype=torch.float64, device=device)
     true_max = true_maxima[args.function]
-    
+
     train_x = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
     train_y = function(train_x).unsqueeze(-1)
     best_init_y = train_y.max().item()
     best_observed_value = best_init_y
-    
+
     gains = np.zeros(len(args.acquisition), dtype=np.float64)
     eta = 0.1  
 
@@ -134,7 +134,7 @@ def bayesian_optimization(args):
 
         # Compute bounds for normalization
         fit_bounds = torch.stack([torch.min(train_x, 0)[0], torch.max(train_x, 0)[0]])
-        
+
         # Normalize inputs and standardize outputs
         train_x_normalized = normalize(train_x, bounds=fit_bounds)
         train_y_standardized = standardize(train_y)
@@ -150,6 +150,7 @@ def bayesian_optimization(args):
             else:
                 raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
             model = MyEnsembleModel(models, weights)
+            selected_model = 'Ensemble'
         else:
             if args.kernel_weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
@@ -159,7 +160,8 @@ def bayesian_optimization(args):
             else:
                 raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
             model = models[selected_model_index]
-        
+            selected_model = args.kernels[selected_model_index]
+
         # Standardize best observed value
         best_f = (best_observed_value - train_y.mean()) / train_y.std()
 
@@ -170,7 +172,7 @@ def bayesian_optimization(args):
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PI': ProbabilityOfImprovement(model=model, best_f=best_f)
         }
-        
+
         candidates_list = []
         for acq_name in args.acquisition:
             acq_function = acquisition[acq_name]
@@ -202,10 +204,10 @@ def bayesian_optimization(args):
             exp_logits = np.exp(eta * logits)
             probs = exp_logits / np.sum(exp_logits)
             chosen_acq_index = np.random.choice(len(args.acquisition), p=probs)
-        
-        chosen_acq_functions.append(chosen_acq_index)
-        selected_models.append(selected_model_index if not args.true_ensemble else None)
-        
+
+        chosen_acq_functions.append(args.acquisition[chosen_acq_index])
+        selected_models.append(selected_model)
+
         new_candidates_normalized = candidates_list[chosen_acq_index]
         new_candidates = unnormalize(new_candidates_normalized, bounds=fit_bounds)
         new_y = function(new_candidates).unsqueeze(-1)
@@ -217,7 +219,7 @@ def bayesian_optimization(args):
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
-                
+
         if args.true_ensemble:
             posterior = model.posterior(new_candidates_normalized)
             posterior_mean = posterior.mean.mean(dim=0) 
@@ -227,7 +229,7 @@ def bayesian_optimization(args):
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
 
-    return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
+    return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, selected_models
 
 def run_experiments(args):
     all_results = []
@@ -237,11 +239,13 @@ def run_experiments(args):
         np.random.seed(seed)
         random.seed(seed)
         start = time.time()
-        best_observed_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, selected_models = bayesian_optimization(args)
         end = time.time()
         experiment_time = end - start
         print(f"Experiment time for MMMA: {experiment_time:.2f} seconds")
-        all_results.append([best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
+        all_results.append([best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, chosen_acq_functions, selected_models])
+        print(f"Acquisition functions used: {chosen_acq_functions[:5]}... (showing first 5)")
+        print(f"Models used: {selected_models[:5]}... (showing first 5)")
 
     return all_results
 
@@ -263,9 +267,9 @@ if __name__ == "__main__":
         parser.error("--kernel_weight_type must be specified as either 'uniform' or 'likelihood'")
 
     all_results = run_experiments(args)
-    
+
     kernel_str = "_".join(args.kernels)
     acq_str = "_".join(args.acquisition)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/{'True' if args.true_ensemble else 'False'}_{args.kernel_weight_type}_{args.acq_weight}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {'True' if args.true_ensemble else 'False'}_{args.kernel_weight_type}_{args.acq_weight}_MMMA_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{acq_str}_optimization_results.npy")
+    np.save(f"./{args.function}_2/MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy")

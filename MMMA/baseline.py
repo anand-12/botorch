@@ -41,19 +41,21 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
     num_initial_points = int(0.1 * n_iterations)
     train_X = draw_sobol_samples(bounds=bounds, n=num_initial_points, q=1).squeeze(1)
     train_Y = objective(train_X).unsqueeze(-1)
-    
+
     best_observed_value = train_Y.max().item()
     f_start = best_observed_value
-    
+
     best_observed_values = [best_observed_value]
     gap_metrics = [gap_metric(f_start, best_observed_value, f_star)]
     simple_regrets = [f_star - best_observed_value]
     cumulative_regrets = [f_star - best_observed_value]
-    
+    kernel_names = []
+    acq_func_names = []
+
     for iteration in range(n_iterations):
         # Compute bounds for normalization
         fit_bounds = torch.stack([torch.min(train_X, 0)[0], torch.max(train_X, 0)[0]])
-        
+
         # Normalize inputs and standardize outputs
         train_X_normalized = normalize(train_X, bounds=fit_bounds)
         train_Y_standardized = standardize(train_Y)
@@ -62,7 +64,7 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         with gpytorch.settings.cholesky_jitter(1e-1):
             fit_gpytorch_mll(mll)
-        
+
         # Standardize best observed value
         best_f = (best_observed_value - train_Y.mean()) / train_Y.std()
 
@@ -74,7 +76,7 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
             'UCB': UpperConfidenceBound(model=model, beta=0.1),
             'PM': PosteriorMean(model=model)
         }[acq_func_name]
-        
+
         # Optimize acquisition function in normalized space
         new_x_normalized, _ = optimize_acqf(
             acq_function=acq_func, 
@@ -83,24 +85,26 @@ def bayesian_optimization(n_iterations, seed, acq_func_name, kernel_name, test_f
             num_restarts=2, 
             raw_samples=50
         )
-        
+
         # Unnormalize new_x before evaluating objective
         new_x = unnormalize(new_x_normalized, bounds=fit_bounds)
         new_y = objective(new_x).unsqueeze(-1)
-        
+
         train_X = torch.cat([train_X, new_x])
         train_Y = torch.cat([train_Y, new_y])
-        
+
         best_observed_value = train_Y.max().item()
-        
+
         best_observed_values.append(best_observed_value)
         gap_metrics.append(gap_metric(f_start, best_observed_value, f_star))
         simple_regrets.append(f_star - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (f_star - best_observed_value))
-        
+        kernel_names.append(kernel_name)
+        acq_func_names.append(acq_func_name)
+
         print(f"Iteration {iteration + 1:>2}: Best value = {best_observed_value:.4f}")
 
-    return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets
+    return best_observed_values, gap_metrics, simple_regrets, cumulative_regrets, kernel_names, acq_func_names
 
 def run_experiments(args):
     all_results = []
@@ -112,12 +116,14 @@ def run_experiments(args):
 
         print(f"\nExperiment Seed: {seed})")
         start_time = time.time()
-        best_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(n_iterations, seed, args.acquisition, args.kernel, args.function, args.dim)
+        best_values, gap_metrics, simple_regrets, cumulative_regrets, kernel_names, acq_func_names = bayesian_optimization(n_iterations, seed, args.acquisition, args.kernel, args.function, args.dim)
         end_time = time.time()
         experiment_time = end_time - start_time
-        all_results.append([best_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
+        all_results.append([best_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, kernel_names, acq_func_names])
         print(f"Best value: {best_values[-1]:.4f}")
         print(f"Experiment time for baseline: {experiment_time:.2f} seconds")
+        print(f"Kernels used: {kernel_names[:5]}... (showing first 5)")
+        print(f"Acquisition functions used: {acq_func_names[:5]}... (showing first 5)")
     return all_results
 
 if __name__ == "__main__":
@@ -131,13 +137,13 @@ if __name__ == "__main__":
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimension for functions that support variable dimensions')
-    
+
     args = parser.parse_args()
-    
+
     all_results = run_experiments(args)
 
     # Save results as .npy file
     all_results_np = np.array(all_results, dtype=object)
-    os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/baseline_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{args.acquisition}_optimization_results.npy", all_results_np)
-    print(f"Results saved to baseline_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{args.acquisition}_optimization_results.npy")
+    os.makedirs(f"./{args.function}_2", exist_ok=True)
+    np.save(f"./{args.function}_2/base.npy", all_results_np)
+    print(f"Results saved to base.npy")

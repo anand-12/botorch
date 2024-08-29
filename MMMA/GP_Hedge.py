@@ -39,7 +39,7 @@ def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kerne
         'Matern32': MaternKernel(nu=1.5, ard_num_dims=train_X.shape[-1]),
         'RFF': RFFKernel(num_samples=1000, ard_num_dims=train_X.shape[-1])
     }[kernel]
-    
+
     single_model = SingleTaskGP(train_X, train_Y, covar_module=ScaleKernel(base_kernel))
     mll = ExactMarginalLogLikelihood(single_model.likelihood, single_model)
     with gpytorch.settings.cholesky_jitter(1e-1):
@@ -99,29 +99,30 @@ def bayesian_optimization(args):
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
     bounds = bounds.to(dtype=dtype, device=device)
-    
+
     # Draw initial points
     train_X = draw_sobol_samples(bounds=bounds, n=initial_points, q=1).squeeze(1)
     train_Y = objective(train_X).unsqueeze(-1)
 
     best_init_y = train_Y.max().item()
     best_train_Y = best_init_y
-    
+
     true_max = true_maxima[args.function]
-    
+
     gains = np.zeros(len(args.acquisition))
     max_values = [best_train_Y]
     gap_metrics = [gap_metric(best_init_y, best_init_y, true_max)]
     simple_regrets = [true_max - best_train_Y]
     cumulative_regrets = [true_max - best_train_Y]
     chosen_acq_functions = []
+    kernel_names = []
 
     for i in range(num_iterations):
         print(f"Running iteration {i+1}/{num_iterations}, Best value = {best_train_Y:.4f}")
-        
+
         # Compute bounds for normalization
         fit_bounds = torch.stack([torch.min(train_X, 0)[0], torch.max(train_X, 0)[0]])
-        
+
         # Normalize inputs and standardize outputs
         train_X_normalized = normalize(train_X, bounds=fit_bounds)
         train_Y_standardized = standardize(train_Y)
@@ -134,7 +135,7 @@ def bayesian_optimization(args):
             best_f, normalize(bounds, fit_bounds),
             args.acquisition, args.kernel, 1, gains, args.acq_weight
         )
-        
+
         # Unnormalize the candidates
         new_candidates = unnormalize(new_candidates_normalized, bounds=fit_bounds)
         new_Y = objective(new_candidates).unsqueeze(-1)
@@ -143,18 +144,19 @@ def bayesian_optimization(args):
         train_Y = torch.cat([train_Y, new_Y])
 
         best_train_Y = train_Y.max().item()
-        
+
         max_values.append(best_train_Y)
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
-        chosen_acq_functions.append(chosen_acq_index)
+        chosen_acq_functions.append(args.acquisition[chosen_acq_index])
+        kernel_names.append(args.kernel)
 
         posterior_mean = model.posterior(new_candidates_normalized).mean
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
 
-    return max_values, gap_metrics, simple_regrets, cumulative_regrets
+    return max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, kernel_names
 
 def run_experiments(args):
     all_results = []
@@ -163,15 +165,17 @@ def run_experiments(args):
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        
+
         start_time = time.time()
-        max_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, kernel_names = bayesian_optimization(args)
         end_time = time.time()
-        
+
         experiment_time = end_time - start_time
-        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
-        
+        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, chosen_acq_functions, kernel_names])
+
         print(f"Experiment {seed} for portfolio completed in {experiment_time:.2f} seconds")
+        print(f"Acquisition functions used: {chosen_acq_functions[:5]}... (showing first 5)")
+        print(f"Kernels used: {kernel_names[:5]}... (showing first 5)")
 
     return all_results
 
@@ -196,7 +200,7 @@ if __name__ == "__main__":
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_acq_weight_{args.acq_weight}_optimization_results.npy", all_results_np)
+    os.makedirs(f"./{args.function}_2", exist_ok=True)
+    np.save(f"./{args.function}_2/GPHedge_{args.acq_weight}.npy", all_results_np)
 
-    print(f"Results saved to portfolio_function_{args.function}{args.dim}_kernel_{args.kernel}_acquisition_{acquisition_str}_acq_weight_{args.acq_weight}_optimization_results.npy")
+    print(f"Results saved to GPHedge_{args.acq_weight}.npy")

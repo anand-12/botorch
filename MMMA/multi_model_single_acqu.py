@@ -93,6 +93,8 @@ def bayesian_optimization(args):
     gap_metrics = [gap_metric(best_init_y, best_init_y, true_max)]
     simple_regrets = [true_max - best_observed_value]
     cumulative_regrets = [true_max - best_observed_value]
+    chosen_kernels = []
+    chosen_acquisitions = []
 
     kernel_map = {
         'RBF': gpytorch.kernels.RBFKernel,
@@ -103,10 +105,10 @@ def bayesian_optimization(args):
 
     for i in range(n_iterations):
         print(f"Running iteration {i+1}/{n_iterations}, Best value = {best_observed_value:.4f}")
-        
+
         # Compute bounds for normalization
         fit_bounds = torch.stack([torch.min(train_x, 0)[0], torch.max(train_x, 0)[0]])
-        
+
         # Normalize inputs and standardize outputs
         train_x_normalized = normalize(train_x, bounds=fit_bounds)
         train_y_standardized = standardize(train_y)
@@ -126,6 +128,7 @@ def bayesian_optimization(args):
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = MyEnsembleModel(models, weights)
+            chosen_kernel = 'Ensemble'
         else:
             if args.weight_type == 'uniform':
                 selected_model_index = np.random.choice(len(models))
@@ -135,6 +138,7 @@ def bayesian_optimization(args):
             else:
                 raise ValueError(f"Unknown weight type: {args.weight_type}")
             model = models[selected_model_index]
+            chosen_kernel = args.kernels[selected_model_index]
 
         # Standardize best observed value
         best_f = (best_observed_value - train_y.mean()) / train_y.std()
@@ -164,13 +168,15 @@ def bayesian_optimization(args):
         train_x = torch.cat([train_x, new_x])
         train_y = torch.cat([train_y, new_y])
         best_observed_value = train_y.max().item()
-        
+
         max_values.append(best_observed_value)
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
-    
-    return max_values, gap_metrics, simple_regrets, cumulative_regrets
+        chosen_kernels.append(chosen_kernel)
+        chosen_acquisitions.append(args.acquisition)
+
+    return max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_kernels, chosen_acquisitions
 
 def run_experiments(args):
     all_results = []
@@ -180,11 +186,13 @@ def run_experiments(args):
         random.seed(seed)
         print(f"\nExperiment with seed {seed}")
         start = time.time()
-        max_values, gap_metrics, simple_regrets, cumulative_regrets = bayesian_optimization(args)
+        max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_kernels, chosen_acquisitions = bayesian_optimization(args)
         end = time.time()
         experiment_time = end - start
-        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time])
+        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, chosen_kernels, chosen_acquisitions])
         print(f"Experiment time for multimodel single acquisition: {experiment_time:.2f} seconds")
+        print(f"Kernels used: {chosen_kernels[:5]}... (showing first 5)")
+        print(f"Acquisition functions used: {chosen_acquisitions[:5]}... (showing first 5)")
     return all_results
 
 if __name__ == "__main__":
@@ -207,9 +215,9 @@ if __name__ == "__main__":
         parser.error("--weight_type must be specified as either 'uniform' or 'likelihood'")
 
     all_results = run_experiments(args)
-    
+
     kernel_str = "_".join(args.kernels)
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/{args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy", np.array(all_results, dtype=object))
-    print(f"\nResults saved to {args.true_ensemble}_{args.weight_type}_ensemble_function_{args.function}{args.dim}_kernel_{kernel_str}_acquisition_{args.acquisition}_optimization_results.npy")
+    np.save(f"./{args.function}_2/MultiModel_{args.weight_type}.npy", np.array(all_results, dtype=object))
+    print(f"\nResults saved to MultiModel_{args.weight_type}.npy")
