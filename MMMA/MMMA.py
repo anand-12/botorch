@@ -271,5 +271,5 @@ if __name__ == "__main__":
     kernel_str = "_".join(args.kernels)
     acq_str = "_".join(args.acquisition)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}_2/MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy", np.array(all_results, dtype=object))
+    np.save(f"./{args.function}/MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy")
