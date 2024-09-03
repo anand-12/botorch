@@ -13,8 +13,8 @@ run_and_print() {
 # Run each script and print the output
 
 
-# run_and_print MMMA.py --experiments 5 --seed 100 --acquisition LogEI LogPI UCB --kernels Matern52 Matern32 RBF --function DropWave --dim 2 --kernel_weight_type likelihood --acq_weight random
-run_and_print MMMA.py --experiments 5 --seed 300 --acquisition LogEI LogPI UCB --kernels Matern52 Matern32 RBF --function Michalewicz --dim 2 --kernel_weight_type likelihood --acq_weight random
+run_and_print MMMA.py --experiments 5 --seed 0 --acquisition LogEI LogPI UCB --kernels Matern52 Matern32 RBF --function Beale --dim 2 --kernel_weight_type likelihood --acq_weight random
+run_and_print MMMA.py --experiments 5 --seed 42 --acquisition LogEI LogPI UCB --kernels Matern52 Matern32 RBF --function Hartmann --dim 6 --kernel_weight_type likelihood --acq_weight random
 
 
 echo "Execution complete."
