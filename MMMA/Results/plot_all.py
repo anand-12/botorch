@@ -5,7 +5,7 @@ import os
 import seaborn as sns
 from matplotlib.lines import Line2D
 
-# Define a distinct color palette
+
 color_palette = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33', '#a65628', '#f781bf', '#41f221']
 method_styles = {
     'base': {'color': color_palette[0]},
@@ -19,14 +19,14 @@ method_styles = {
     'MultiModel_uniform': {'color': color_palette[8]}
 }
 
-# List of folders to ignore
-IGNORE_FOLDERS = ['Result_Images', 'baselines']  # Add folders you want to ignore here
+
+IGNORE_FOLDERS = ['Result_Images', 'baselines']  
 
 def process_file(file_path):
     data = np.load(file_path, allow_pickle=True)
     metrics = []
     for experiment in data:
-        experiment_metrics = [experiment[i] for i in range(4)]  # First 4 metrics
+        experiment_metrics = [experiment[i] for i in range(4)]  
         metrics.append(experiment_metrics)
     return np.array(metrics)
 
@@ -40,7 +40,7 @@ def create_adaptive_legend(ax, lines, labels, position):
     if position == 'top':
         legend_bbox = (bbox.x0, bbox.y1, bbox.width, 0.1)
         loc = 'lower left'
-    else:  # bottom
+    else:  
         legend_bbox = (bbox.x0, bbox.y0, bbox.width, 0.1)
         loc = 'upper left'
     
@@ -72,22 +72,22 @@ def plot_metrics(file_paths, output_dir, dataset_name):
 
         if metric in ["Simple Regret"] and dataset_name != 'Shekel':
             ax.set_yscale('log')
-            plt.subplots_adjust(bottom=0.05)  # Make room for legend at the top
+            plt.subplots_adjust(bottom=0.05)  
             legend_position = 'top'
         else:
             legend_position = 'bottom'
-            plt.subplots_adjust(bottom=0.05)  # Make room for legend at the bottom
+            plt.subplots_adjust(bottom=0.05)  
 
-        # Remove "Iterations" label from the x-axis
-        # ax.set_xlabel('')
-        ax.set_ylabel(metric, fontsize=18, fontweight='bold')  # Increase y-axis label size and make it bold
+        
+        
+        ax.set_ylabel(metric, fontsize=18, fontweight='bold')  
 
-        # Increase the font size and weight of the tick labels
-        ax.tick_params(axis='both', which='major', labelsize=18, width=2)
+        
+        ax.tick_params(axis='both', which='major', labelsize=1, width=2)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-        # Create and place the adaptive legend
+        
         create_adaptive_legend(ax, lines, file_names, legend_position)
 
         plt.tight_layout()
@@ -107,7 +107,7 @@ def process_datasets(base_path):
             file_pattern = os.path.join(folder_path, '*.npy')
             all_file_paths = glob.glob(file_pattern)
             
-            # Filter out 'PI_is_back' files
+            
             file_paths = [fp for fp in all_file_paths if 'PI_is_back' not in fp]
             
             if file_paths:
@@ -117,5 +117,5 @@ def process_datasets(base_path):
                 print(f"No valid .npy files found in {folder}")
 
 if __name__ == "__main__":
-    base_path = '.'  # Current directory, change this if your datasets are elsewhere
+    base_path = '.'  
     process_datasets(base_path)

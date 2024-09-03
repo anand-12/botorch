@@ -200,7 +200,7 @@ if __name__ == "__main__":
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    os.makedirs(f"./{args.function}_2", exist_ok=True)
-    np.save(f"./{args.function}_2/GPHedge_{args.acq_weight}.npy", all_results_np)
+    os.makedirs(f"./Results/{args.function}", exist_ok=True)
+    np.save(f"./Results/{args.function}/GPHedge_{args.acq_weight}.npy", all_results_np)
 
     print(f"Results saved to GPHedge_{args.acq_weight}.npy")

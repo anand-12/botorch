@@ -145,5 +145,5 @@ if __name__ == "__main__":
     # Save results as .npy file
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./{args.function}_2", exist_ok=True)
-    np.save(f"./{args.function}_2/base.npy", all_results_np)
+    np.save(f"./Results/{args.function}/base.npy", all_results_np)
     print(f"Results saved to base.npy")

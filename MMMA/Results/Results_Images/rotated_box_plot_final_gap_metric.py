@@ -92,6 +92,6 @@ def plot_ensemble_gap_metric(folders):
     print("Rotated box plot has been saved as 'ensemble_gap_metric_boxplot_rotated.png'.")
 
 if __name__ == "__main__":
-    folders = ['/Users/anand/Desktop/botorch/MMMA/Results/Ackley', '/Users/anand/Desktop/botorch/MMMA/Results/Beale', '/Users/anand/Desktop/botorch/MMMA/Results/Branin', '/Users/anand/Desktop/botorch/MMMA/Results/Bukin', '/Users/anand/Desktop/botorch/MMMA/Results/Cosine8', '/Users/anand/Desktop/botorch/MMMA/Results/DixonPrice', '/Users/anand/Desktop/botorch/MMMA/Results/DropWave', '/Users/anand/Desktop/botorch/MMMA/Results/Griewank', 
-               '/Users/anand/Desktop/botorch/MMMA/Results/Hartmann', '/Users/anand/Desktop/botorch/MMMA/Results/Levy', '/Users/anand/Desktop/botorch/MMMA/Results/Michalewicz', '/Users/anand/Desktop/botorch/MMMA/Results/Rastrigin', '/Users/anand/Desktop/botorch/MMMA/Results/Rosenbrock', '/Users/anand/Desktop/botorch/MMMA/Results/SixHumpCamel', '/Users/anand/Desktop/botorch/MMMA/Results/ThreeHumpCamel', '/Users/anand/Desktop/botorch/MMMA/Results/Shekel']
+    folders = ['./../Ackley', './../Beale', './../Branin', './../Bukin', './../Cosine8', './../DixonPrice', './../DropWave', './../Griewank', 
+               './../Hartmann', './../Levy', './../Michalewicz', './../Rastrigin', './../Rosenbrock', './../SixHumpCamel', './../ThreeHumpCamel', './../Shekel']
     plot_ensemble_gap_metric(folders)

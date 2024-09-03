@@ -36,14 +36,14 @@ def load_data(folder_path):
     return data
 
 def plot_custom_rocket_style_heatmap(data, selection_type, options, custom_labels):
-    fig, ax = plt.subplots(figsize=(15, 8))  # Reduced figure height for compactness
+    fig, ax = plt.subplots(figsize=(15, 8)) 
 
     groups = ['base', 'MultiModel', 'GPHedge', 'MMMA']
 
     y_positions = []
     y_ticks = []
 
-    y_pos = 0  # Adjusted to control vertical spacing
+    y_pos = 0 
     for group_idx, group in enumerate(groups):
         group_methods = [method for method in data.keys() if method.startswith(group)]
 
@@ -63,32 +63,27 @@ def plot_custom_rocket_style_heatmap(data, selection_type, options, custom_label
             y_positions.append(y_pos)
             y_ticks.append(y_pos)
 
-            y_pos -= 1  # Move to the next row
-        # add vertical line separating y label and plot
+            y_pos -= 1  
         ax.axvline(x=-2.75, color='black', linewidth=2)
         if group_idx < len(groups) - 1:
-            ax.axhline(y=y_pos + 0.5, color='black', linewidth=2)  # Add horizontal line separating subgroups
+            ax.axhline(y=y_pos + 0.5, color='black', linewidth=2)
 
-    # Customize the plot
     ax.set_yticks([])
     ax.set_xticks([])
     ax.set_xlim(-6, len(selections) + 2)
-    ax.set_ylim(y_pos - 1, 1)  # Adjusted for compactness
+    ax.set_ylim(y_pos - 1, 1) 
 
-    # Remove the box around the plot
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # Adjust the position of the color bar to reduce the gap
     cbar_ax = fig.add_axes([0.15, 0.1, 0.7, 0.02])  # [left, bottom, width, height]
     cbar = plt.colorbar(scatter, cax=cbar_ax, orientation='horizontal')
     cbar.set_ticks(range(len(options)))
     cbar.set_ticklabels(options)
     cbar.ax.tick_params(labelsize=25)
 
-    plt.tight_layout(pad=1)  # Reduced padding to make the plot more compact
+    plt.tight_layout(pad=1)  
 
-    # Dynamically generate filename using the function name
     function_name = "Hartmann"
     filename = f"{function_name}_{selection_type}.png"
     
@@ -97,15 +92,12 @@ def plot_custom_rocket_style_heatmap(data, selection_type, options, custom_label
 
     print(f"Plot saved as {filename}")
 
-# Main execution
 folder_path = './Hartmann_2'
 data = load_data(folder_path)
 
-# Define constant lists for kernels and acquisition functions
 kernel_options = ['Matern52', 'Matern32', 'RBF']
 af_options = ['LogEI', 'LogPI', 'UCB']
 
-# Define custom labels
 custom_labels = {
     'base': 'Standard\nBO',
     'MultiModel_likelihood': 'MM\nBMA',

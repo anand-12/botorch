@@ -16,43 +16,12 @@ from botorch.acquisition import ExpectedImprovement, qExpectedImprovement, Upper
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
-from botorch.models.ensemble import EnsembleModel
-from botorch.posteriors.ensemble import EnsemblePosterior
 from botorch.utils.transforms import normalize, unnormalize, standardize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
 botorch.settings.debug = True
 warnings.filterwarnings("ignore")
-
-class MyEnsembleModel(EnsembleModel):
-    def __init__(self, models, weights=None):
-        super().__init__()
-        self.models = models
-        self._num_outputs = models[0].num_outputs
-        self.weights = weights
-
-    def forward(self, X):
-        for model in self.models:
-            model.eval()
-        outputs = [model(X) for model in self.models]
-        samples = torch.stack([output.rsample() for output in outputs], dim=0)
-        return samples
-
-    def posterior(self, X, output_indices=None, posterior_transform=None, **kwargs):
-        values = self.forward(X)
-        if values.dim() == 2:
-            values = values.unsqueeze(-1)
-        if output_indices is not None:
-            values = values[..., output_indices]
-        posterior = EnsemblePosterior(values=values, my_weights=self.weights)
-        if posterior_transform is not None:
-            return posterior_transform(posterior)
-        return posterior
-
-    @property
-    def num_outputs(self):
-        return self._num_outputs
 
 def fit_model(train_x, train_y, kernel_type):
     train_x = train_x.to(dtype=torch.float64, device=device)
@@ -142,25 +111,16 @@ def bayesian_optimization(args):
         models = [fit_model(train_x_normalized, train_y_standardized, kernel)[0] for kernel in args.kernels]
         mlls = [ExactMarginalLogLikelihood(model.likelihood, model).to(device=device, dtype=torch.float64) for model in models]
 
-        if args.true_ensemble:
-            if args.kernel_weight_type == 'uniform':
-                weights = None
-            elif args.kernel_weight_type == 'likelihood':
-                weights = torch.tensor(calculate_weights(models, mlls, train_x_normalized, train_y_standardized), dtype=torch.float64, device=device)
-            else:
-                raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
-            model = MyEnsembleModel(models, weights)
-            selected_model = 'Ensemble'
+
+        if args.kernel_weight_type == 'uniform':
+            selected_model_index = np.random.choice(len(models))
+        elif args.kernel_weight_type == 'likelihood':
+            weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
+            selected_model_index = select_model(weights)
         else:
-            if args.kernel_weight_type == 'uniform':
-                selected_model_index = np.random.choice(len(models))
-            elif args.kernel_weight_type == 'likelihood':
-                weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
-                selected_model_index = select_model(weights)
-            else:
-                raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
-            model = models[selected_model_index]
-            selected_model = args.kernels[selected_model_index]
+            raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
+        model = models[selected_model_index]
+        selected_model = args.kernels[selected_model_index]
 
         # Standardize best observed value
         best_f = (best_observed_value - train_y.mean()) / train_y.std()
@@ -220,11 +180,7 @@ def bayesian_optimization(args):
         simple_regrets.append(true_max - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
 
-        if args.true_ensemble:
-            posterior = model.posterior(new_candidates_normalized)
-            posterior_mean = posterior.mean.mean(dim=0) 
-        else:
-            posterior_mean = model.posterior(new_candidates_normalized).mean
+        posterior_mean = model.posterior(new_candidates_normalized).mean
 
         reward = posterior_mean.mean().item()
         gains[chosen_acq_index] += reward
@@ -257,7 +213,6 @@ if __name__ == "__main__":
     parser.add_argument("--experiments", type=int, default=1, help="Number of experiments to run")
     parser.add_argument("--function", type=str, default="Hartmann", choices=list(true_maxima.keys()), help="Test function to optimize")
     parser.add_argument("--dim", type=int, default=6, help="Dimensionality of the test function")
-    parser.add_argument("--true_ensemble", action="store_true", help="Use true ensemble model if set, otherwise use weighted model selection")
     parser.add_argument("--kernel_weight_type", type=str, default="uniform", choices=["uniform", "likelihood"], help="Type of weights to use for model selection or ensemble")
     parser.add_argument("--acq_weight", type=str, default="bandit", choices=["random", "bandit"], help="Method for selecting acquisition function: random or bandit")
 
@@ -271,5 +226,5 @@ if __name__ == "__main__":
     kernel_str = "_".join(args.kernels)
     acq_str = "_".join(args.acquisition)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./{args.function}/MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy", np.array(all_results, dtype=object))
+    np.save(f"./Results/{args.function}/MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to MMMA_{args.kernel_weight_type}_{args.acq_weight}.npy")
