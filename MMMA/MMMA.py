@@ -16,12 +16,14 @@ from botorch.acquisition import ExpectedImprovement, qExpectedImprovement, Upper
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition.analytic import LogProbabilityOfImprovement
+
 from botorch.utils.transforms import normalize, unnormalize, standardize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
 botorch.settings.debug = True
 warnings.filterwarnings("ignore")
+
 
 def fit_model(train_x, train_y, kernel_type):
     train_x = train_x.to(dtype=torch.float64, device=device)
@@ -122,6 +124,16 @@ def bayesian_optimization(args):
         model = models[selected_model_index]
         selected_model = args.kernels[selected_model_index]
 
+        if args.kernel_weight_type == 'uniform':
+            selected_model_index = np.random.choice(len(models))
+        elif args.kernel_weight_type == 'likelihood':
+            weights = calculate_weights(models, mlls, train_x_normalized, train_y_standardized)
+            selected_model_index = select_model(weights)
+        else:
+            raise ValueError(f"Unknown weight type: {args.kernel_weight_type}")
+        model = models[selected_model_index]
+        selected_model = args.kernels[selected_model_index]
+
         # Standardize best observed value
         best_f = (best_observed_value - train_y.mean()) / train_y.std()
 
@@ -179,6 +191,7 @@ def bayesian_optimization(args):
         gap_metrics.append(gap_metric(best_init_y, best_observed_value, true_max))
         simple_regrets.append(true_max - best_observed_value)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_observed_value))
+
 
         posterior_mean = model.posterior(new_candidates_normalized).mean
 

@@ -89,6 +89,7 @@ def bayesian_optimization(args):
             models.append(model)
             mlls.append(mll)
 
+
         if args.weight_type == 'uniform':
             selected_model_index = np.random.choice(len(models))
         elif args.weight_type == 'likelihood':
@@ -177,5 +178,5 @@ if __name__ == "__main__":
     kernel_str = "_".join(args.kernels)
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./{args.function}", exist_ok=True)
-    np.save(f"./Results/{args.function}/MultiModel_{args.weight_type}.npy", np.array(all_results, dtype=object))
+    np.save(f"./{args.function}/MultiModel_{args.weight_type}.npy", np.array(all_results, dtype=object))
     print(f"\nResults saved to MultiModel_{args.weight_type}.npy")

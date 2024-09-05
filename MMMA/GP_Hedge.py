@@ -32,7 +32,91 @@ dtype = torch.float64
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None, acq_weight='bandit'):
+class ImprovedABEBayesianOptimization:
+    def __init__(self, bounds, acquisition_functions):
+        self.bounds = bounds
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.double
+        self.acquisition_functions = acquisition_functions
+
+        # self.X = torch.empty(0, bounds.shape[1], dtype=self.dtype, device=self.device)
+        # self.Y = torch.empty(0, 1, dtype=self.dtype, device=self.device)
+
+        # Treating risk as a random variable and defining priors
+        self.risk_mean = torch.zeros(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
+        self.risk_cov = torch.eye(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
+
+    def propose_location(self, model, best_f):
+        normalized_bounds = torch.stack([torch.zeros(self.bounds.shape[1]), torch.ones(self.bounds.shape[1])])
+        
+        candidate_acqs = []
+        acq_values = []
+        acq_logs = {af: [] for af in self.acquisition_functions}  # New logging dictionary
+
+        for af in self.acquisition_functions:
+            if af == 'UCB':
+                acq = UpperConfidenceBound(model=model, beta=0.1)
+            elif af in ['EI', 'LogEI']:
+                acq = ExpectedImprovement(model=model, best_f=best_f) if af == 'EI' else LogExpectedImprovement(model=model, best_f=best_f)
+            elif af in ['PI', 'LogPI']:
+                acq = ProbabilityOfImprovement(model=model, best_f=best_f) if af == 'PI' else LogProbabilityOfImprovement(model=model, best_f=best_f)
+            elif af == 'PM':
+                acq = PosteriorMean(model=model)
+            else:
+                raise ValueError(f"Unsupported acquisition function: {af}")
+
+            candidates, _ = optimize_acqf(
+                acq_function=acq,
+                bounds=normalized_bounds,
+                q=1,
+                num_restarts=2,
+                raw_samples=20,
+            )
+            candidate_acqs.append(candidates)
+            acq_value = acq(candidates)
+            acq_values.append(acq_value)
+            acq_logs[af].append(acq_value.item())  # Log the acquisition function value
+
+        losses = -torch.cat(acq_values)  # Negative because we want to minimize loss
+        
+        # # Log the acquisition function values
+        # for af, values in acq_logs.items():
+        #     print(f"{af} values: min={min(values):.4f}, max={max(values):.4f}, mean={sum(values)/len(values):.4f}")
+        
+        # Posterior calculation and ensemble decision rule
+        weights = self.compute_abe_weights(losses)
+        return self.ensemble_decision(candidate_acqs, weights)
+
+    def compute_abe_weights(self, losses):
+        # Compute the precision of the likelihood (assuming diagonal covariance for simplicity)
+        likelihood_precision = 1.0 / torch.var(losses)
+        
+        # Compute the posterior
+        posterior_cov_inv = torch.inverse(self.risk_cov) + likelihood_precision * torch.eye(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
+        posterior_cov = torch.inverse(posterior_cov_inv)
+        posterior_mean = posterior_cov @ (torch.inverse(self.risk_cov) @ self.risk_mean + likelihood_precision * losses)
+
+        # Update the prior for the next iteration
+        self.risk_mean = posterior_mean
+        self.risk_cov = posterior_cov
+
+        n_samples = 10000
+        risk_samples = torch.distributions.MultivariateNormal(posterior_mean, posterior_cov).sample((n_samples,))
+        
+        weights = torch.zeros(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
+        for sample in risk_samples:
+            best_idx = torch.argmin(sample)
+            weights[best_idx] += 1
+        
+        return weights / n_samples
+
+    def ensemble_decision(self, candidates, weights):
+        weighted_sum = torch.zeros_like(candidates[0])
+        for candidate, weight in zip(candidates, weights):
+            weighted_sum += weight * candidate
+        return weighted_sum
+
+def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kernel, n_points=1, gains=None, acq_weight='bandit', use_abe=False):
     base_kernel = {
         'Matern52': MaternKernel(nu=2.5, ard_num_dims=train_X.shape[-1]),
         'RBF': RBFKernel(ard_num_dims=train_X.shape[-1]),
@@ -45,54 +129,61 @@ def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kerne
     with gpytorch.settings.cholesky_jitter(1e-1):
         fit_gpytorch_mll(mll)
 
-    acq_function_map = {
-        'EI': ExpectedImprovement(model=single_model, best_f=best_train_Y),
-        'UCB': UpperConfidenceBound(model=single_model, beta=0.1),
-        'PI': ProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
-        'LogEI': LogExpectedImprovement(model=single_model, best_f=best_train_Y),
-        'LogPI': LogProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
-        'PM': PosteriorMean(model=single_model)
-    }
+    if use_abe:
+        abe_optimizer = ImprovedABEBayesianOptimization(bounds, acq_functions)
+        candidates = abe_optimizer.propose_location(single_model, best_train_Y)
+        chosen_acq_index = 0  # ABE doesn't have a single chosen acquisition function
+    else:
+        acq_function_map = {
+            'EI': ExpectedImprovement(model=single_model, best_f=best_train_Y),
+            'UCB': UpperConfidenceBound(model=single_model, beta=0.1),
+            'PI': ProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
+            'LogEI': LogExpectedImprovement(model=single_model, best_f=best_train_Y),
+            'LogPI': LogProbabilityOfImprovement(model=single_model, best_f=best_train_Y),
+            'PM': PosteriorMean(model=single_model)
+        }
 
-    candidates_list = []
-    for acq_name in acq_functions:
-        if acq_name in acq_function_map:
-            acq_function = acq_function_map[acq_name]
+        candidates_list = []
+        for acq_name in acq_functions:
+            if acq_name in acq_function_map:
+                acq_function = acq_function_map[acq_name]
+                candidates, _ = optimize_acqf(
+                    acq_function=acq_function,
+                    bounds=bounds,
+                    q=n_points,
+                    num_restarts=2,
+                    raw_samples=20,
+                    options={"batch_limit": 5, "maxiter": 200}
+                )
+                candidates_list.append(candidates)
+
+        if not candidates_list:
+            print("Warning: No valid acquisition functions. Using Expected Improvement.")
+            ei = ExpectedImprovement(model=single_model, best_f=best_train_Y)
             candidates, _ = optimize_acqf(
-                acq_function=acq_function,
+                acq_function=ei,
                 bounds=bounds,
                 q=n_points,
                 num_restarts=2,
                 raw_samples=20,
                 options={"batch_limit": 5, "maxiter": 200}
             )
-            candidates_list.append(candidates)
+            candidates_list = [candidates]
+            acq_functions = ['EI']
 
-    if not candidates_list:
-        print("Warning: No valid acquisition functions. Using Expected Improvement.")
-        ei = ExpectedImprovement(model=single_model, best_f=best_train_Y)
-        candidates, _ = optimize_acqf(
-            acq_function=ei,
-            bounds=bounds,
-            q=n_points,
-            num_restarts=2,
-            raw_samples=20,
-            options={"batch_limit": 5, "maxiter": 200}
-        )
-        candidates_list = [candidates]
-        acq_functions = ['EI']
+        if acq_weight == 'random' or gains is None or len(gains) == 0:
+            chosen_acq_index = np.random.choice(len(candidates_list))
+        else:  # bandit
+            eta = 0.1
+            logits = np.array(gains[:len(candidates_list)])
+            logits -= np.max(logits)
+            exp_logits = np.exp(eta * logits)
+            probs = exp_logits / np.sum(exp_logits)
+            chosen_acq_index = np.random.choice(len(candidates_list), p=probs)
 
-    if acq_weight == 'random' or gains is None or len(gains) == 0:
-        chosen_acq_index = np.random.choice(len(candidates_list))
-    else:  # bandit
-        eta = 0.1
-        logits = np.array(gains[:len(candidates_list)])
-        logits -= np.max(logits)
-        exp_logits = np.exp(eta * logits)
-        probs = exp_logits / np.sum(exp_logits)
-        chosen_acq_index = np.random.choice(len(candidates_list), p=probs)
+        candidates = candidates_list[chosen_acq_index]
 
-    return candidates_list[chosen_acq_index], chosen_acq_index, single_model
+    return candidates, chosen_acq_index, single_model
 
 def bayesian_optimization(args):
     num_iterations = 100
@@ -133,7 +224,7 @@ def bayesian_optimization(args):
         new_candidates_normalized, chosen_acq_index, model = get_next_points(
             train_X_normalized, train_Y_standardized, 
             best_f, normalize(bounds, fit_bounds),
-            args.acquisition, args.kernel, 1, gains, args.acq_weight
+            args.acquisition, args.kernel, 1, gains, args.acq_weight, args.use_abe
         )
 
         # Unnormalize the candidates
@@ -149,7 +240,7 @@ def bayesian_optimization(args):
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
-        chosen_acq_functions.append(args.acquisition[chosen_acq_index])
+        chosen_acq_functions.append(args.acquisition[chosen_acq_index] if not args.use_abe else 'ABE')
         kernel_names.append(args.kernel)
 
         posterior_mean = model.posterior(new_candidates_normalized).mean
@@ -194,13 +285,18 @@ if __name__ == "__main__":
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
     parser.add_argument('--acq_weight', type=str, default='bandit', choices=['random', 'bandit'],
                         help='Method for selecting acquisition function: random or bandit')
+    parser.add_argument('--use_abe', action='store_true', help='Use Improved Approximate Bayesian Ensembles')
     args = parser.parse_args()
+    
     acquisition_str = "_".join(args.acquisition)
     all_results = run_experiments(args)
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    os.makedirs(f"./Results/{args.function}", exist_ok=True)
-    np.save(f"./Results/{args.function}/GPHedge_{args.acq_weight}.npy", all_results_np)
+    os.makedirs(f"./{args.function}", exist_ok=True)
+    if args.use_abe:
+        np.save(f"./Results/{args.function}/GPHedge_abe.npy", all_results_np)
+    else:
+        np.save(f"./Results/{args.function}/GPHedge_{args.acq_weight}.npy", all_results_np)
 
-    print(f"Results saved to GPHedge_{args.acq_weight}.npy")
+    # print(f"Results saved to GPHedge_{args.acq_weight}.npy")
