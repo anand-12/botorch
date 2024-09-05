@@ -297,10 +297,10 @@ if __name__ == "__main__":
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
-    os.makedirs(f"./{args.function}", exist_ok=True)
+    os.makedirs(f"./Results/{args.function}_abe", exist_ok=True)
     if args.use_abe:
-        np.save(f"./Results/{args.function}/GPHedge_abe.npy", all_results_np)
+        np.save(f"./Results/{args.function}_abe/GPHedge_abe.npy", all_results_np)
     else:
-        np.save(f"./Results/{args.function}/GPHedge_{args.acq_weight}.npy", all_results_np)
+        np.save(f"./Results/{args.function}_abe/GPHedge_{args.acq_weight}.npy", all_results_np)
 
     # print(f"Results saved to GPHedge_{args.acq_weight}.npy")
