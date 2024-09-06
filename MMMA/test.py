@@ -185,7 +185,7 @@ def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kerne
 
     return candidates, chosen_acq_index, single_model
 
-def bayesian_optimization(args, use_least_risk):
+def bayesian_optimization(args):
     num_iterations = 100
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
@@ -208,8 +208,8 @@ def bayesian_optimization(args, use_least_risk):
     chosen_acq_functions = []
     kernel_names = []
 
-    # Create ABE optimizer
-    abe_optimizer = ABEBO(bounds, args.acquisition, use_least_risk)
+    # Create ABE optimizer once if using ABE
+    abe_optimizer = ABEBO(bounds, args.acquisition, args.use_least_risk) if args.use_abe else None
 
     for i in range(num_iterations):
         print(f"Running iteration {i+1}/{num_iterations}, Best value = {best_train_Y:.4f}")
@@ -243,7 +243,7 @@ def bayesian_optimization(args, use_least_risk):
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
-        chosen_acq_functions.append('ABE')
+        chosen_acq_functions.append(args.acquisition[chosen_acq_index] if not args.use_abe else 'ABE')
         kernel_names.append(args.kernel)
 
         posterior_mean = model.posterior(new_candidates_normalized).mean
@@ -261,25 +261,13 @@ def run_experiments(args):
         random.seed(seed)
 
         start_time = time.time()
-        
-        results_original = bayesian_optimization(args, use_least_risk=False)
-        results_least_risk = bayesian_optimization(args, use_least_risk=True)
-        
-        # Select the one with lower final cumulative regret
-        if results_original[3][-1] <= results_least_risk[3][-1]:
-            selected_results = results_original
-            strategy = "original"
-        else:
-            selected_results = results_least_risk
-            strategy = "least_risk"
-        
+        max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, kernel_names = bayesian_optimization(args)
         end_time = time.time()
 
         experiment_time = end_time - start_time
-        all_results.append(selected_results + [experiment_time, strategy])
+        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, chosen_acq_functions, kernel_names])
 
         print(f"Experiment {seed} for portfolio completed in {experiment_time:.2f} seconds")
-        print(f"Selected strategy: {strategy}")
 
     return all_results
 
@@ -296,10 +284,14 @@ if __name__ == "__main__":
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
-    parser.add_argument('--use_abe', action='store_true', help='Use the Adaptive Bayesian Ensemble method')
     parser.add_argument('--acq_weight', type=str, default='bandit', choices=['random', 'bandit'],
                         help="Method for selecting acquisition function: random or bandit")
+    parser.add_argument('--use_abe', action='store_true', help='Use Improved Approximate Bayesian Ensembles')
+    parser.add_argument('--use_least_risk', action='store_true', help='Use least risk strategy for ABE (only applicable when use_abe is True)')
     args = parser.parse_args()
+    
+    if args.use_least_risk and not args.use_abe:
+        parser.error("--use_least_risk can only be used when --use_abe is also specified")
 
     acquisition_str = "_".join(args.acquisition)
     all_results = run_experiments(args)
@@ -308,8 +300,11 @@ if __name__ == "__main__":
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./Results/{args.function}_abe", exist_ok=True)
     
-    filename = f"GPHedge_abe.npy"
+    if args.use_abe:
+        filename = f"GPHedge_abe{'_least_risk' if args.use_least_risk else ''}.npy"
+    else:
+        filename = f"GPHedge_{args.acq_weight}.npy"
     
-    np.save(f"./abe_results/{args.function}_{filename}", all_results_np)
+    np.save(f"./Results/{args.function}_abe/{filename}", all_results_np)
 
-    print(f"Results saved to ./abe_results/{args.function}_{filename}")
+    print(f"Results saved to ./Results/{args.function}_abe/{filename}")
