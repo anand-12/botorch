@@ -32,17 +32,14 @@ dtype = torch.float64
 def gap_metric(f_start, f_current, f_star):
     return np.abs((f_start - f_current) / (f_start - f_star))
 
-class ImprovedABEBayesianOptimization:
-    def __init__(self, bounds, acquisition_functions):
+class ABEBO:
+    def __init__(self, bounds, acquisition_functions, use_least_risk=False):
         self.bounds = bounds
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.double
         self.acquisition_functions = acquisition_functions
+        self.use_least_risk = use_least_risk
 
-        # self.X = torch.empty(0, bounds.shape[1], dtype=self.dtype, device=self.device)
-        # self.Y = torch.empty(0, 1, dtype=self.dtype, device=self.device)
-
-        # Treating risk as a random variable and defining priors
         self.risk_mean = torch.zeros(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
         self.risk_cov = torch.eye(len(self.acquisition_functions), dtype=self.dtype, device=self.device)
 
@@ -51,7 +48,7 @@ class ImprovedABEBayesianOptimization:
         
         candidate_acqs = []
         acq_values = []
-        acq_logs = {af: [] for af in self.acquisition_functions}  # New logging dictionary
+        acq_logs = {af: [] for af in self.acquisition_functions}
 
         for af in self.acquisition_functions:
             if af == 'UCB':
@@ -75,17 +72,19 @@ class ImprovedABEBayesianOptimization:
             candidate_acqs.append(candidates)
             acq_value = acq(candidates)
             acq_values.append(acq_value)
-            acq_logs[af].append(acq_value.item())  # Log the acquisition function value
+            acq_logs[af].append(acq_value.item())
 
         losses = -torch.cat(acq_values)  # Negative because we want to minimize loss
         
-        # # Log the acquisition function values
-        # for af, values in acq_logs.items():
-        #     print(f"{af} values: min={min(values):.4f}, max={max(values):.4f}, mean={sum(values)/len(values):.4f}")
-        
-        # Posterior calculation and ensemble decision rule
         weights = self.compute_abe_weights(losses)
-        return self.ensemble_decision(candidate_acqs, weights)
+        
+        if self.use_least_risk:
+            # Select the candidate with the least risk
+            least_risk_index = torch.argmin(self.risk_mean)
+            return candidate_acqs[least_risk_index]
+        else:
+            # Use the ensemble decision (original behavior)
+            return self.ensemble_decision(candidate_acqs, weights)
 
     def compute_abe_weights(self, losses):
         # Compute the precision of the likelihood (assuming diagonal covariance for simplicity)
@@ -186,7 +185,7 @@ def get_next_points(train_X, train_Y, best_train_Y, bounds, acq_functions, kerne
 
     return candidates, chosen_acq_index, single_model
 
-def bayesian_optimization(args):
+def bayesian_optimization(args, use_least_risk):
     num_iterations = 100
     initial_points = int(0.1 * num_iterations)
     objective, bounds = setup_test_function(args.function, dim=args.dim)
@@ -209,8 +208,8 @@ def bayesian_optimization(args):
     chosen_acq_functions = []
     kernel_names = []
 
-    # Create ABE optimizer once if using ABE
-    abe_optimizer = ImprovedABEBayesianOptimization(bounds, args.acquisition) if args.use_abe else None
+    # Create ABE optimizer
+    abe_optimizer = ABEBO(bounds, args.acquisition, use_least_risk)
 
     for i in range(num_iterations):
         print(f"Running iteration {i+1}/{num_iterations}, Best value = {best_train_Y:.4f}")
@@ -244,7 +243,7 @@ def bayesian_optimization(args):
         gap_metrics.append(gap_metric(best_init_y, best_train_Y, true_max))
         simple_regrets.append(true_max - best_train_Y)
         cumulative_regrets.append(cumulative_regrets[-1] + (true_max - best_train_Y))
-        chosen_acq_functions.append(args.acquisition[chosen_acq_index] if not args.use_abe else 'ABE')
+        chosen_acq_functions.append('ABE')
         kernel_names.append(args.kernel)
 
         posterior_mean = model.posterior(new_candidates_normalized).mean
@@ -262,15 +261,25 @@ def run_experiments(args):
         random.seed(seed)
 
         start_time = time.time()
-        max_values, gap_metrics, simple_regrets, cumulative_regrets, chosen_acq_functions, kernel_names = bayesian_optimization(args)
+        
+        results_original = bayesian_optimization(args, use_least_risk=False)
+        results_least_risk = bayesian_optimization(args, use_least_risk=True)
+        
+        # Select the one with lower final cumulative regret
+        if results_original[3][-1] <= results_least_risk[3][-1]:
+            selected_results = results_original
+            strategy = "original"
+        else:
+            selected_results = results_least_risk
+            strategy = "least_risk"
+        
         end_time = time.time()
 
         experiment_time = end_time - start_time
-        all_results.append([max_values, gap_metrics, simple_regrets, cumulative_regrets, experiment_time, chosen_acq_functions, kernel_names])
+        all_results.append(selected_results + [experiment_time, strategy])
 
         print(f"Experiment {seed} for portfolio completed in {experiment_time:.2f} seconds")
-        print(f"Acquisition functions used: {chosen_acq_functions[:5]}... (showing first 5)")
-        print(f"Kernels used: {kernel_names[:5]}... (showing first 5)")
+        print(f"Selected strategy: {strategy}")
 
     return all_results
 
@@ -287,20 +296,20 @@ if __name__ == "__main__":
     parser.add_argument('--function', type=str, default='Hartmann', choices=list(true_maxima.keys()),
                         help='Test function to optimize')
     parser.add_argument('--dim', type=int, default=6, help='Dimensionality of the problem (for functions that support variable dimensions)')
+    parser.add_argument('--use_abe', action='store_true', help='Use the Adaptive Bayesian Ensemble method')
     parser.add_argument('--acq_weight', type=str, default='bandit', choices=['random', 'bandit'],
-                        help='Method for selecting acquisition function: random or bandit')
-    parser.add_argument('--use_abe', action='store_true', help='Use Improved Approximate Bayesian Ensembles')
+                        help="Method for selecting acquisition function: random or bandit")
     args = parser.parse_args()
-    
+
     acquisition_str = "_".join(args.acquisition)
     all_results = run_experiments(args)
 
     # Convert to numpy array and save
     all_results_np = np.array(all_results, dtype=object)
     os.makedirs(f"./Results/{args.function}_abe", exist_ok=True)
-    if args.use_abe:
-        np.save(f"./Results/{args.function}_abe/GPHedge_abe.npy", all_results_np)
-    else:
-        np.save(f"./Results/{args.function}_abe/GPHedge_{args.acq_weight}.npy", all_results_np)
+    
+    filename = f"GPHedge_abe.npy"
+    
+    np.save(f"./abe_results/{args.function}_{filename}", all_results_np)
 
-    # print(f"Results saved to GPHedge_{args.acq_weight}.npy")
+    print(f"Results saved to ./abe_results/{args.function}_{filename}")
