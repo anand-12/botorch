@@ -6,7 +6,7 @@ import seaborn as sns
 from matplotlib.lines import Line2D
 
 # Define an extended color palette
-color_palette = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33', '#a65628', '#f781bf', '#41f221', '#00CED1', '#0000CD', '#8B4513', '#FF1493', '#00FF00', '#FF4500', '#1E90FF']
+color_palette = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33', '#a65628', '#f781bf', '#41f221', '#00CED1', '#0000CD', '#8B4513', '#FF1493', '#00FF00', '#FF4500', '#1E90FF', '#009999']
 
 method_styles = {
     'base': {'color': color_palette[0]},
@@ -24,7 +24,8 @@ method_styles = {
     'MMMA_abe_random': {'color': color_palette[12]},
     'MMMA_BMA_abe': {'color': color_palette[13]},
     'MMMA_uniform_abe': {'color': color_palette[14]},
-    'MMMA_abe_abe': {'color': color_palette[15]}
+    'MMMA_abe_abe': {'color': color_palette[15]},
+    'GPHedgeyq_bandit': {'color': color_palette[16]}
 }
 
 # List of folders to ignore
@@ -118,7 +119,7 @@ def process_datasets(base_path):
                 'base', 'GPHedge_bandit', 'GPHedge_uniform', 'GPHedge_abe',
                 'MMMA_BMA_bandit', 'MMMA_uniform_bandit', 'MMMA_uniform_random',
                 'MMMA_BMA_random', 'MultiModel_BMA', 'MultiModel_uniform', 'MultiModel_abe',
-                'MMMA_abe_bandit', 'MMMA_abe_random', 'MMMA_BMA_abe', 'MMMA_uniform_abe', 'MMMA_abe_abe'
+                'MMMA_abe_bandit', 'MMMA_abe_random', 'MMMA_BMA_abe', 'MMMA_uniform_abe', 'MMMA_abe_abe', 'GPHedgeyq_bandit'
             ]
             file_paths = [fp for fp in all_file_paths if any(vfn in fp for vfn in valid_file_names)]
             
